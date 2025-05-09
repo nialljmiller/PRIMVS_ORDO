@@ -26,9 +26,7 @@ output_file = sys.argv[2] if len(sys.argv) > 2 else "fit_with_predictions.csv"
 FEATURE_COLUMNS = [str(i) for i in range(128)] + [
     "MAD", "eta", "true_amplitude", "mean_var", "std_nxs", "range_cum_sum", "max_slope",
     "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD",
-    "ls_period1", "ls_y_y_0", "ls_peak_width_0",
-    "pdm_period1", "pdm_y_y_0",
-    "ce_period1", "ce_y_y_0",
+    "true_period",
     "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag", "z_med_mag-ks_med_mag",
     "parallax", "pmra", "pmdec", "chisq", "uwe"
 ]  # Selected science features
@@ -409,6 +407,10 @@ visualize_knn_graph_sample(edge_index, node_labels, class_names_with_unknown)
 
 def plot_feature_class_correlations(df, features, class_column):
     # Select a subset of interesting features
+    df = df.copy()
+    df[class_column] = df[class_column].astype(str)  # Convert to string to avoid endianness issues
+    
+
     selected_features = features[:12] if len(features) > 12 else features
     
     plt.figure(figsize=(18, 12))
@@ -452,7 +454,7 @@ def plot_period_amplitude(df, class_column):
     # Create scatter plot
     for class_name in df[class_column].unique():
         subset = df[df[class_column] == class_name]
-        plt.scatter(subset['ls_period1'], subset['true_amplitude'], 
+        plt.scatter(subset['true_period'], subset['true_amplitude'], 
                    label=class_name, alpha=0.7, s=50)
     
     plt.xscale('log')
@@ -467,8 +469,7 @@ def plot_period_amplitude(df, class_column):
     #plt.show()
 
 # Check if required columns exist
-if 'ls_period1' in fit_df_cleaned.columns and 'true_amplitude' in fit_df_cleaned.columns:
-    plot_period_amplitude(fit_df_cleaned, LABEL_COLUMN)
+plot_period_amplitude(fit_df_cleaned, LABEL_COLUMN)
 
 
 
