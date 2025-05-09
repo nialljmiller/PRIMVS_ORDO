@@ -33,16 +33,38 @@ FEATURE_COLUMNS = [str(i) for i in range(128)] + [
 LABEL_COLUMN = "true_class"
 K_NEIGHBORS = 15
 
-# === Load FITS File ===
-print(f"Loading input file: {input_file}")
-try:
-    with fits.open(input_file) as hdul:
+# === Load FITS Files ===
+def load_fits_to_dataframe(fits_path):
+    with fits.open(fits_path) as hdul:
         data = hdul[1].data
-        data_df = pd.DataFrame(data.byteswap().newbyteorder())
+        # Try direct conversion without byteswap/newbyteorder
+        try:
+            return pd.DataFrame(data)
+        except Exception as e:
+            print(f"Direct conversion failed: {e}")
+            # Alternative approach using structured array
+            try:
+                return pd.DataFrame.from_records(data)
+            except Exception as e:
+                print(f"Structured array approach failed: {e}")
+                # Last resort: manual field extraction
+                columns = data.names
+                df = pd.DataFrame()
+                for col in columns:
+                    df[col] = data[col]
+                return df
+
+# Use the new function for loading
+try:
+    train_df = load_fits_to_dataframe(TRAIN_PATH)
+    fit_df = load_fits_to_dataframe(FIT_PATH)
+    print(f"Successfully loaded {len(train_df)} training samples and {len(fit_df)} fitting samples")
 except Exception as e:
-    print(f"Error opening FITS file: {e}")
+    print(f"Failed to load FITS files: {e}")
     sys.exit(1)
 
+
+    
 # === Split into train and test sets ===
 # You might need to adjust this logic based on your data structure
 # For now, let's use 70% for training and 30% for testing
