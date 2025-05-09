@@ -10,6 +10,8 @@ from torch_geometric.nn import GCNConv
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neighbors import kneighbors_graph
 from astropy.io import fits
+from sklearn.manifold import TSNE
+
 
 # === Parse command-line arguments ===
 if len(sys.argv) < 2:
