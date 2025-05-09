@@ -150,6 +150,7 @@ if label_encoder is not None:
 else:
     print("No labels available for training. Skipping training phase.")
 
+
 # === Inference ===
 model.eval()
 with torch.no_grad():
@@ -158,33 +159,19 @@ with torch.no_grad():
     probs = F.softmax(logits, dim=1).cpu().numpy()
 
 # === Append Predictions ===
-fit_mask = original_index >= len(train_df)
-fit_df_cleaned = fit_df.iloc[original_index[fit_mask]].copy().reset_index(drop=True)
-
-if label_encoder is not None:
-    fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(preds[fit_mask])
-else:
-    fit_df_cleaned["gnn_predicted_class"] = preds[fit_mask]
-
-fit_df_cleaned["gnn_confidence"] = probs[fit_mask].max(axis=1)
-
-# === Save ===
-fit_df_cleaned.to_csv(output_file, index=False)
-print(f"Saved predictions to {output_file}")
-
-
-
-# After dropping NaNs
-x_df_full = x_df_full.dropna().reset_index(drop=False)
-# Store mapping from new indices to original indices
-original_to_processed_map = dict(zip(x_df_full['index'], range(len(x_df_full))))
-
-# Then in prediction phase
+# Identify indices corresponding to test set
 fit_indices = [i for i, idx in enumerate(original_index) if idx >= len(train_df)]
 fit_preds = preds[fit_indices]
 fit_probs = probs[fit_indices]
 
 # Create output dataframe with predictions
 fit_df_cleaned = fit_df.copy()
-fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(fit_preds)
+if label_encoder is not None:
+    fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(fit_preds)
+else:
+    fit_df_cleaned["gnn_predicted_class"] = fit_preds
 fit_df_cleaned["gnn_confidence"] = fit_probs.max(axis=1)
+
+# === Save ===
+fit_df_cleaned.to_csv(output_file, index=False)
+print(f"Saved predictions to {output_file}")
