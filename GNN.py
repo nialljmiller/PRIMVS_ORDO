@@ -139,7 +139,7 @@ if label_encoder is not None:
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
 
     model.train()
-    for epoch in range(200):
+    for epoch in range(20):
         optimizer.zero_grad()
         out = model(data.x, data.edge_index)
         loss = F.cross_entropy(out[train_mask], data.y[train_mask])
@@ -247,12 +247,27 @@ plot_confidence_distribution(confidences, predictions, class_names)
 
 
 
-
-
-from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
-
-def visualize_embeddings(model, data, labels, class_names):
+def visualize_embeddings(model, data, labels, class_names, test_indices):
+    """
+    Visualize the embeddings from the GNN model using t-SNE and PCA projections.
+    
+    Parameters:
+    -----------
+    model : torch.nn.Module
+        The trained GNN model
+    data : torch_geometric.data.Data
+        The full graph data object
+    labels : numpy.ndarray
+        The class labels for the test set
+    class_names : list
+        List of class names
+    test_indices : numpy.ndarray
+        Indices of test set samples in the full dataset
+        
+    Returns:
+    --------
+    None, saves visualization files
+    """
     # Extract embeddings from penultimate layer
     model.eval()
     with torch.no_grad():
@@ -261,46 +276,47 @@ def visualize_embeddings(model, data, labels, class_names):
         embeddings = F.relu(embeddings)
         embeddings = embeddings.cpu().numpy()
     
+    # Filter embeddings to include only test set
+    test_embeddings = embeddings[test_indices]
+    
     # Apply dimensionality reduction
     tsne = TSNE(n_components=2, random_state=42, perplexity=30)
-    reduced_embeddings = tsne.fit_transform(embeddings)
+    reduced_embeddings = tsne.fit_transform(test_embeddings)
     
     # Plot
     plt.figure(figsize=(12, 10))
     for i, class_name in enumerate(class_names):
         mask = labels == i
-        plt.scatter(reduced_embeddings[mask, 0], reduced_embeddings[mask, 1], 
-                   label=class_name, alpha=0.6, s=50)
+        if np.any(mask):  # Only plot if we have at least one point
+            plt.scatter(reduced_embeddings[mask, 0], reduced_embeddings[mask, 1], 
+                       label=class_name, alpha=0.6, s=50)
     
     plt.legend(fontsize=12)
     plt.title('t-SNE Projection of GNN Node Embeddings', fontsize=16)
     plt.tight_layout()
     plt.savefig('node_embeddings_tsne.png', dpi=300)
-    #plt.show()
     
     # Alternative: PCA
     pca = PCA(n_components=2)
-    pca_result = pca.fit_transform(embeddings)
+    pca_result = pca.fit_transform(test_embeddings)
     
     plt.figure(figsize=(12, 10))
     for i, class_name in enumerate(class_names):
         mask = labels == i
-        plt.scatter(pca_result[mask, 0], pca_result[mask, 1], 
-                   label=class_name, alpha=0.6, s=50)
+        if np.any(mask):  # Only plot if we have at least one point
+            plt.scatter(pca_result[mask, 0], pca_result[mask, 1], 
+                       label=class_name, alpha=0.6, s=50)
     
     plt.legend(fontsize=12)
     plt.title(f'PCA Projection of GNN Node Embeddings\nExplained Variance: {sum(pca.explained_variance_ratio_):.2f}', fontsize=16)
     plt.tight_layout()
     plt.savefig('node_embeddings_pca.png', dpi=300)
-    #plt.show()
 
-# Usage
-# Convert string labels to numeric
+# Usage example - add this to your main code
+fit_indices = np.where(original_index >= len(train_df))[0]  # Get indices of test samples in the dataset
 test_labels = fit_df_cleaned[LABEL_COLUMN].map(
     {class_name: i for i, class_name in enumerate(class_names)}).values
-visualize_embeddings(model, data, test_labels, class_names)
-
-
+visualize_embeddings(model, data, test_labels, class_names, fit_indices)
 
 
 
