@@ -139,7 +139,7 @@ if label_encoder is not None:
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
 
     model.train()
-    for epoch in range(20):
+    for epoch in range(2000):
         optimizer.zero_grad()
         out = model(data.x, data.edge_index)
         loss = F.cross_entropy(out[train_mask], data.y[train_mask])
@@ -450,6 +450,9 @@ plot_feature_class_correlations(fit_df_cleaned, available_astro_features, LABEL_
 
 def plot_period_amplitude(df, class_column):
     plt.figure(figsize=(12, 10))
+    
+    df = df.copy()
+    df[class_column] = df[class_column].astype(str)  # Convert to string to avoid endianness issues
     
     # Create scatter plot
     for class_name in df[class_column].unique():
