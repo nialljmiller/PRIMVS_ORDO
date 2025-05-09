@@ -202,7 +202,7 @@ def plot_classification_performance(y_true, y_pred, class_names):
     plt.title('Normalized Confusion Matrix')
     plt.tight_layout()
     plt.savefig('confusion_matrix.png', dpi=300)
-    plt.show()
+    #plt.show()
     
     # Print classification report
     print(classification_report(y_true, y_pred, target_names=class_names))
@@ -234,7 +234,7 @@ def plot_confidence_distribution(confidences, predictions, class_names):
     plt.legend()
     plt.grid(alpha=0.3)
     plt.savefig('confidence_distribution.png', dpi=300)
-    plt.show()
+    #plt.show()
 
 # Usage
 confidences = fit_df_cleaned["gnn_confidence"].values
@@ -276,7 +276,7 @@ def visualize_embeddings(model, data, labels, class_names):
     plt.title('t-SNE Projection of GNN Node Embeddings', fontsize=16)
     plt.tight_layout()
     plt.savefig('node_embeddings_tsne.png', dpi=300)
-    plt.show()
+    #plt.show()
     
     # Alternative: PCA
     pca = PCA(n_components=2)
@@ -292,7 +292,7 @@ def visualize_embeddings(model, data, labels, class_names):
     plt.title(f'PCA Projection of GNN Node Embeddings\nExplained Variance: {sum(pca.explained_variance_ratio_):.2f}', fontsize=16)
     plt.tight_layout()
     plt.savefig('node_embeddings_pca.png', dpi=300)
-    plt.show()
+    #plt.show()
 
 # Usage
 # Convert string labels to numeric
@@ -325,7 +325,7 @@ def feature_importance_analysis(model, data, feature_names):
     plt.title('Top 20 Feature Importance in GNN First Layer')
     plt.tight_layout()
     plt.savefig('feature_importance.png', dpi=300)
-    plt.show()
+    #plt.show()
 
 # Usage
 feature_importance_analysis(model, data, valid_features)
@@ -379,7 +379,7 @@ def visualize_knn_graph_sample(edge_index, node_labels, class_names, n_samples=5
     plt.title(f'KNN Graph Structure Sample (n={n_samples} nodes)', fontsize=16)
     plt.axis('off')
     plt.savefig('knn_graph_sample.png', dpi=300)
-    plt.show()
+    #plt.show()
 
 # Usage
 node_labels = y_all.cpu().numpy()
@@ -408,7 +408,7 @@ def plot_feature_class_correlations(df, features, class_column):
     
     plt.tight_layout()
     plt.savefig('feature_class_distributions.png', dpi=300)
-    plt.show()
+    #plt.show()
 
 # Select key astronomical features
 astronomical_features = [
@@ -446,7 +446,7 @@ def plot_period_amplitude(df, class_column):
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.savefig('period_amplitude.png', dpi=300)
-    plt.show()
+    #plt.show()
 
 # Check if required columns exist
 if 'ls_period1' in fit_df_cleaned.columns and 'true_amplitude' in fit_df_cleaned.columns:
