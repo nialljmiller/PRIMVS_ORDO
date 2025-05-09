@@ -1,6 +1,5 @@
-# GNN Classification Script for Stellar Sources using FITS files
-# Requires: torch, torch_geometric, pandas, scikit-learn, astropy
-
+import sys
+import os
 import pandas as pd
 import numpy as np
 import torch
@@ -12,9 +11,16 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neighbors import kneighbors_graph
 from astropy.io import fits
 
+# === Parse command-line arguments ===
+if len(sys.argv) < 2:
+    print("Usage: python GNN.py <input_fits_file> [output_file]")
+    print("Example: python GNN.py data.fits output_predictions.csv")
+    sys.exit(1)
+
+input_file = sys.argv[1]
+output_file = sys.argv[2] if len(sys.argv) > 2 else "fit_with_predictions.csv"
+
 # === User Configuration ===
-TRAIN_PATH = "train.fits"
-FIT_PATH = "fit.fits"
 FEATURE_COLUMNS = [str(i) for i in range(128)] + [
     "MAD", "eta", "true_amplitude", "mean_var", "std_nxs", "range_cum_sum", "max_slope",
     "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD",
@@ -27,14 +33,25 @@ FEATURE_COLUMNS = [str(i) for i in range(128)] + [
 LABEL_COLUMN = "true_class"
 K_NEIGHBORS = 15
 
-# === Load FITS Files ===
-with fits.open(TRAIN_PATH) as hdul:
-    train_data = hdul[1].data
-    train_df = pd.DataFrame(train_data.byteswap().newbyteorder())
+# === Load FITS File ===
+print(f"Loading input file: {input_file}")
+try:
+    with fits.open(input_file) as hdul:
+        data = hdul[1].data
+        data_df = pd.DataFrame(data.byteswap().newbyteorder())
+except Exception as e:
+    print(f"Error opening FITS file: {e}")
+    sys.exit(1)
 
-with fits.open(FIT_PATH) as hdul:
-    fit_data = hdul[1].data
-    fit_df = pd.DataFrame(fit_data.byteswap().newbyteorder())
+# === Split into train and test sets ===
+# You might need to adjust this logic based on your data structure
+# For now, let's use 70% for training and 30% for testing
+train_size = int(0.7 * len(data_df))
+train_df = data_df[:train_size]
+fit_df = data_df[train_size:]
+
+print(f"Training set size: {len(train_df)}")
+print(f"Testing set size: {len(fit_df)}")
 
 # === Validate and Prepare Feature Matrix ===
 common_features = [col for col in FEATURE_COLUMNS if col in train_df.columns and col in fit_df.columns]
@@ -63,12 +80,17 @@ x = torch.tensor(x, dtype=torch.float)
 # === Build Labels ===
 original_index = x_df_full['index'].values
 train_mask_array = original_index < len(train_df)
-label_encoder = LabelEncoder()
-train_labels = train_df.loc[original_index[train_mask_array], LABEL_COLUMN].values
-encoded_labels = torch.tensor(label_encoder.fit_transform(train_labels), dtype=torch.long)
+if LABEL_COLUMN in train_df.columns:
+    train_labels = train_df.loc[original_index[train_mask_array], LABEL_COLUMN].values
+    label_encoder = LabelEncoder()
+    encoded_labels = torch.tensor(label_encoder.fit_transform(train_labels), dtype=torch.long)
 
-y_all = torch.full((len(x_df_full),), -1, dtype=torch.long)
-y_all[torch.tensor(train_mask_array)] = encoded_labels
+    y_all = torch.full((len(x_df_full),), -1, dtype=torch.long)
+    y_all[torch.tensor(train_mask_array)] = encoded_labels
+else:
+    print(f"Warning: Label column '{LABEL_COLUMN}' not found. Running in inference-only mode.")
+    y_all = torch.full((len(x_df_full),), -1, dtype=torch.long)
+    label_encoder = None
 
 # === Create KNN Graph ===
 knn = kneighbors_graph(x, n_neighbors=K_NEIGHBORS, include_self=True)
@@ -91,21 +113,27 @@ class GCN(torch.nn.Module):
 data = Data(x=x, edge_index=edge_index, y=y_all)
 train_mask = data.y != -1
 
-# === Train Model ===
+# === Train Model if labels are available ===
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 data = data.to(device)
-model = GCN(in_channels=x.shape[1], hidden_channels=64, out_channels=len(label_encoder.classes_)).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+num_classes = len(label_encoder.classes_) if label_encoder is not None else 2
+model = GCN(in_channels=x.shape[1], hidden_channels=64, out_channels=num_classes).to(device)
 
-model.train()
-for epoch in range(200):
-    optimizer.zero_grad()
-    out = model(data.x, data.edge_index)
-    loss = F.cross_entropy(out[train_mask], data.y[train_mask])
-    loss.backward()
-    optimizer.step()
-    if epoch % 20 == 0:
-        print(f"Epoch {epoch:03d}, Loss: {loss.item():.4f}")
+if label_encoder is not None:
+    print(f"Training model with {num_classes} classes...")
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+
+    model.train()
+    for epoch in range(200):
+        optimizer.zero_grad()
+        out = model(data.x, data.edge_index)
+        loss = F.cross_entropy(out[train_mask], data.y[train_mask])
+        loss.backward()
+        optimizer.step()
+        if epoch % 20 == 0:
+            print(f"Epoch {epoch:03d}, Loss: {loss.item():.4f}")
+else:
+    print("No labels available for training. Skipping training phase.")
 
 # === Inference ===
 model.eval()
@@ -117,9 +145,14 @@ with torch.no_grad():
 # === Append Predictions ===
 fit_mask = original_index >= len(train_df)
 fit_df_cleaned = fit_df.iloc[original_index[fit_mask]].copy().reset_index(drop=True)
-fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(preds[fit_mask])
+
+if label_encoder is not None:
+    fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(preds[fit_mask])
+else:
+    fit_df_cleaned["gnn_predicted_class"] = preds[fit_mask]
+
 fit_df_cleaned["gnn_confidence"] = probs[fit_mask].max(axis=1)
 
 # === Save ===
-fit_df_cleaned.to_csv("fit_with_predictions.csv", index=False)
-print("Saved predictions to fit_with_predictions.csv")
+fit_df_cleaned.to_csv(output_file, index=False)
+print(f"Saved predictions to {output_file}")
