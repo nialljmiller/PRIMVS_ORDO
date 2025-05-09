@@ -56,18 +56,11 @@ def load_fits_to_dataframe(fits_path):
 
 # Use the new function for loading
 try:
-    train_df = load_fits_to_dataframe(TRAIN_PATH)
-    fit_df = load_fits_to_dataframe(FIT_PATH)
-    print(f"Successfully loaded {len(train_df)} training samples and {len(fit_df)} fitting samples")
+    data_df = load_fits_to_dataframe(input_file)
 except Exception as e:
     print(f"Failed to load FITS files: {e}")
     sys.exit(1)
 
-
-    
-# === Split into train and test sets ===
-# You might need to adjust this logic based on your data structure
-# For now, let's use 70% for training and 30% for testing
 train_size = int(0.7 * len(data_df))
 train_df = data_df[:train_size]
 fit_df = data_df[train_size:]
