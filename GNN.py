@@ -81,22 +81,7 @@ x_df_full.replace([np.inf, -np.inf], np.nan, inplace=True)
 
 # === Drop rows with NaNs and reset index (preserve original index for alignment)
 initial_len = len(x_df_full)
-# After dropping NaNs
-
 x_df_full = x_df_full.dropna().reset_index(drop=False)
-# Store mapping from new indices to original indices
-original_to_processed_map = dict(zip(x_df_full['index'], range(len(x_df_full))))
-
-# Then in prediction phase
-fit_indices = [i for i, idx in enumerate(original_index) if idx >= len(train_df)]
-fit_preds = preds[fit_indices]
-fit_probs = probs[fit_indices]
-
-# Create output dataframe with predictions
-fit_df_cleaned = fit_df.copy()
-fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(fit_preds)
-fit_df_cleaned["gnn_confidence"] = fit_probs.max(axis=1)
-
 print(f"Dropped {initial_len - len(x_df_full)} rows due to NaNs/infs. Remaining: {len(x_df_full)}")
 
 # === Recompute features that survived the dropna ===
@@ -186,3 +171,20 @@ fit_df_cleaned["gnn_confidence"] = probs[fit_mask].max(axis=1)
 # === Save ===
 fit_df_cleaned.to_csv(output_file, index=False)
 print(f"Saved predictions to {output_file}")
+
+
+
+# After dropping NaNs
+x_df_full = x_df_full.dropna().reset_index(drop=False)
+# Store mapping from new indices to original indices
+original_to_processed_map = dict(zip(x_df_full['index'], range(len(x_df_full))))
+
+# Then in prediction phase
+fit_indices = [i for i, idx in enumerate(original_index) if idx >= len(train_df)]
+fit_preds = preds[fit_indices]
+fit_probs = probs[fit_indices]
+
+# Create output dataframe with predictions
+fit_df_cleaned = fit_df.copy()
+fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(fit_preds)
+fit_df_cleaned["gnn_confidence"] = fit_probs.max(axis=1)
