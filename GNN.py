@@ -65,17 +65,45 @@ except Exception as e:
 
 # Add this after loading the data
 def get_max_prob_class(row):
-    # Define the class probability columns
-    class_cols = ['PQSO', 'PGal', 'Pstar', 'PWD', 'Pbin']
-    # Get the column with max probability
-    max_prob_col = max(class_cols, key=lambda col: row[col])
-    # Return the class name (remove the 'P' prefix)
-    return max_prob_col[1:]  # Remove 'P' from 'PQSO', 'PGal', etc.
+    # First, let's check which probability columns actually exist
+    expected_class_cols = ['PQSO', 'PGal', 'Pstar', 'PWD', 'Pbin']
+    available_class_cols = [col for col in expected_class_cols if col in row.index]
+    
+    # If none of the expected columns exist, check for variants with suffixes
+    if not available_class_cols:
+        suffix_variants = []
+        for base in expected_class_cols:
+            for suffix in ['-S', '-A']:
+                if f"{base}{suffix}" in row.index:
+                    suffix_variants.append(f"{base}{suffix}")
+        
+        if suffix_variants:
+            # Use the first suffix group we find (-S or -A)
+            suffix = suffix_variants[0].split('-')[1]
+            available_class_cols = [col for col in suffix_variants if col.endswith(f"-{suffix}")]
+    
+    # If we have columns to check, find the max probability
+    if available_class_cols:
+        max_prob_col = max(available_class_cols, key=lambda col: row[col])
+        # Return the class name (remove the 'P' prefix and any suffix)
+        base_name = max_prob_col.split('-')[0] if '-' in max_prob_col else max_prob_col
+        return base_name[1:]  # Remove 'P' from column name
+    
+    # Fallback: check if 'label' column exists
+    elif 'label' in row.index:
+        return row['label']
+    
+    # Last resort
+    else:
+        return "Unknown"
 
 # Apply this function to create a new 'true_class' column
+# First, print available columns to diagnose the issue
+print("Available columns in the data:")
+print(data_df.columns.tolist())
+
+# Then create the true_class column
 data_df['true_class'] = data_df.apply(get_max_prob_class, axis=1)
-
-
 
 train_size = int(0.7 * len(data_df))
 train_df = data_df[:train_size]
