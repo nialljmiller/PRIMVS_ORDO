@@ -15,145 +15,171 @@ from sklearn.decomposition import PCA
 from vis import *
 
 # === Parse command-line arguments ===
-if len(sys.argv) < 2:
-    print("Usage: python GNN.py <input_fits_file> [output_file]")
-    print("Example: python GNN.py data.fits output_predictions.csv")
+if len(sys.argv) < 3:
+    print("Usage: python GNN.py <training_fits_file> <testing_fits_file> [output_file]")
+    print("Example: python GNN.py primvs.fits primvs_gaia.fits output_predictions.csv")
     sys.exit(1)
 
-input_file = sys.argv[1]
-output_file = sys.argv[2] if len(sys.argv) > 2 else "fit_with_predictions.csv"
+training_file = sys.argv[1]
+testing_file = sys.argv[2]
+output_file = sys.argv[3] if len(sys.argv) > 3 else "fit_with_predictions.csv"
 
 # === User Configuration ===
-FEATURE_COLUMNS = [str(i) for i in range(128)] + [
+# Base astronomical features
+BASE_FEATURES = [
     "MAD", "eta", "true_amplitude", "mean_var", "std_nxs", "range_cum_sum", "max_slope",
-    "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD",
-    "true_period",
+    "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD", "true_period",
     "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag", "z_med_mag-ks_med_mag",
     "parallax", "pmra", "pmdec", "chisq", "uwe"
-]  # Selected science features
+]
+
+# Embedding features (numbered dimensions from contrastive learning)
+EMBEDDING_FEATURES = [str(i) for i in range(128)]
+
+# All features to use
+FEATURE_COLUMNS = EMBEDDING_FEATURES + BASE_FEATURES
+
+# Classification labels
 LABEL_COLUMN = "true_class"
-K_NEIGHBORS = 15
+
+# Graph and model configuration
+K_NEIGHBORS = 8  # Reduced from 15 to save memory
+MAX_CLASSES = 15  # Limit to top N classes to prevent memory issues
+BATCH_SIZE = 4096  # For memory-efficient training
+USE_CPU = False  # Set to True to force CPU usage
 
 # === Load FITS Files ===
 def load_fits_to_dataframe(fits_path):
+    print(f"Loading data from {fits_path}...")
     with fits.open(fits_path) as hdul:
         data = hdul[1].data
-        # Try direct conversion without byteswap/newbyteorder
         try:
             return pd.DataFrame(data)
         except Exception as e:
             print(f"Direct conversion failed: {e}")
-            # Alternative approach using structured array
             try:
                 return pd.DataFrame.from_records(data)
             except Exception as e:
                 print(f"Structured array approach failed: {e}")
-                # Last resort: manual field extraction
                 columns = data.names
                 df = pd.DataFrame()
                 for col in columns:
                     df[col] = data[col]
                 return df
 
-# Use the new function for loading
+# Load training data
 try:
-    data_df = load_fits_to_dataframe(input_file)
+    train_df = load_fits_to_dataframe(training_file)
+    print(f"Loaded training data: {len(train_df)} rows")
 except Exception as e:
-    print(f"Failed to load FITS files: {e}")
+    print(f"Failed to load training file: {e}")
     sys.exit(1)
 
+# Load testing data
+try:
+    test_df = load_fits_to_dataframe(testing_file)
+    print(f"Loaded testing data: {len(test_df)} rows")
+except Exception as e:
+    print(f"Failed to load testing file: {e}")
+    sys.exit(1)
 
-# Add this after loading the data
-def get_max_prob_class(row):
-    # First, let's check which probability columns actually exist
-    expected_class_cols = ['PQSO', 'PGal', 'Pstar', 'PWD', 'Pbin']
-    available_class_cols = [col for col in expected_class_cols if col in row.index]
+# === Analyze classes ===
+print("\nExamining true_class distribution in training data:")
+train_classes = train_df[LABEL_COLUMN].value_counts()
+print(f"Found {len(train_classes)} unique classes")
+print(train_classes.head(10))
+
+# Limit to most common classes to prevent memory issues
+if len(train_classes) > MAX_CLASSES:
+    common_classes = train_classes.nlargest(MAX_CLASSES).index.tolist()
+    print(f"\nLimiting to {MAX_CLASSES} most common classes: {common_classes}")
     
-    # If none of the expected columns exist, check for variants with suffixes
-    if not available_class_cols:
-        suffix_variants = []
-        for base in expected_class_cols:
-            for suffix in ['-S', '-A']:
-                if f"{base}{suffix}" in row.index:
-                    suffix_variants.append(f"{base}{suffix}")
-        
-        if suffix_variants:
-            # Use the first suffix group we find (-S or -A)
-            suffix = suffix_variants[0].split('-')[1]
-            available_class_cols = [col for col in suffix_variants if col.endswith(f"-{suffix}")]
+    # Create new column with common classes or "Other"
+    train_df['class_grouped'] = train_df[LABEL_COLUMN].apply(
+        lambda x: x if x in common_classes else "Other"
+    )
+    test_df['class_grouped'] = test_df[LABEL_COLUMN].apply(
+        lambda x: x if x in common_classes else "Other"
+    )
+    LABEL_COLUMN = 'class_grouped'
     
-    # If we have columns to check, find the max probability
-    if available_class_cols:
-        max_prob_col = max(available_class_cols, key=lambda col: row[col])
-        # Return the class name (remove the 'P' prefix and any suffix)
-        base_name = max_prob_col.split('-')[0] if '-' in max_prob_col else max_prob_col
-        return base_name[1:]  # Remove 'P' from column name
+    # Show the distribution of the new classes
+    print("\nDistribution after grouping:")
+    print(train_df[LABEL_COLUMN].value_counts())
+
+# === Identify common features across both datasets ===
+train_features = set(train_df.columns)
+test_features = set(test_df.columns)
+common_features = list(train_features.intersection(test_features))
+available_features = [f for f in FEATURE_COLUMNS if f in common_features]
+
+print(f"\nFound {len(available_features)} common features across both datasets")
+if len(available_features) < 10:
+    print("WARNING: Very few features available. Identifying alternative features...")
+    # Look for embedding features with different naming patterns
+    potential_embeddings = [col for col in common_features if (
+        col.startswith('z') or col.startswith('h') or col.startswith('u')
+    ) and (
+        'pca' in col.lower() or 'tsne' in col.lower() or 'umap' in col.lower()
+    )]
     
-    # Fallback: check if 'label' column exists
-    elif 'label' in row.index:
-        return row['label']
-    
-    # Last resort
-    else:
-        return "Unknown"
+    if potential_embeddings:
+        print(f"Found {len(potential_embeddings)} potential embedding features")
+        available_features += [col for col in potential_embeddings if col not in available_features]
 
-# Apply this function to create a new 'true_class' column
-# First, print available columns to diagnose the issue
-print("Available columns in the data:")
-print(data_df.columns.tolist())
+print(f"Using {len(available_features)} features for model training")
 
-# Then create the true_class column
-data_df['true_class'] = data_df.apply(get_max_prob_class, axis=1)
+# === Prepare Feature Matrices ===
+# Process training data
+X_train = train_df[available_features].copy()
+X_train.replace([np.inf, -np.inf], np.nan, inplace=True)
+print(f"NaN values in training data: {X_train.isna().sum().sum()}")
 
-train_size = int(0.7 * len(data_df))
-train_df = data_df[:train_size]
-fit_df = data_df[train_size:]
+# Process testing data
+X_test = test_df[available_features].copy()
+X_test.replace([np.inf, -np.inf], np.nan, inplace=True)
+print(f"NaN values in testing data: {X_test.isna().sum().sum()}")
 
-print(f"Training set size: {len(train_df)}")
-print(f"Testing set size: {len(fit_df)}")
+# Compute statistics from training data only
+train_min = X_train.quantile(0.001)
+train_max = X_train.quantile(0.999)
+train_mean = X_train.mean()
 
-# === Validate and Prepare Feature Matrix ===
-common_features = [col for col in FEATURE_COLUMNS if col in train_df.columns and col in fit_df.columns]
-x_df_full = pd.concat([train_df[common_features], fit_df[common_features]], ignore_index=True)
+# Apply clipping and imputation to both datasets using training statistics
+X_train = X_train.clip(lower=train_min, upper=train_max, axis=1)
+X_train.fillna(train_mean, inplace=True)
 
-# === Handle NaNs or Infs and clip ===
-x_df_full.replace([np.inf, -np.inf], np.nan, inplace=True)
-clip_low = x_df_full.quantile(0.001)
-clip_high = x_df_full.quantile(0.999)
-x_df_full = x_df_full.clip(lower=clip_low, upper=clip_high, axis=1)
-x_df_full.replace([np.inf, -np.inf], np.nan, inplace=True)
+X_test = X_test.clip(lower=train_min, upper=train_max, axis=1)
+X_test.fillna(train_mean, inplace=True)
 
-# === Drop rows with NaNs and reset index (preserve original index for alignment)
-initial_len = len(x_df_full)
-x_df_full = x_df_full.dropna().reset_index(drop=False)
-print(f"Dropped {initial_len - len(x_df_full)} rows due to NaNs/infs. Remaining: {len(x_df_full)}")
-
-# === Recompute features that survived the dropna ===
-valid_features = [col for col in common_features if col in x_df_full.columns and not x_df_full[col].isna().any()]
-
-# === Normalize Features ===
+# Combine for standardization
+X_combined = pd.concat([X_train, X_test], ignore_index=True)
 scaler = StandardScaler()
-x = scaler.fit_transform(x_df_full[valid_features].values)
-x = torch.tensor(x, dtype=torch.float)
+X_scaled = scaler.fit_transform(X_combined)
 
-# === Build Labels ===
-original_index = x_df_full['index'].values
-train_mask_array = original_index < len(train_df)
-if LABEL_COLUMN in train_df.columns:
-    train_labels = train_df.loc[original_index[train_mask_array], LABEL_COLUMN].values
-    label_encoder = LabelEncoder()
-    encoded_labels = torch.tensor(label_encoder.fit_transform(train_labels), dtype=torch.long)
+# Split back to train and test
+X_train_scaled = X_scaled[:len(X_train)]
+X_test_scaled = X_scaled[len(X_train):]
 
-    y_all = torch.full((len(x_df_full),), -1, dtype=torch.long)
-    y_all[torch.tensor(train_mask_array)] = encoded_labels
-else:
-    print(f"Warning: Label column '{LABEL_COLUMN}' not found. Running in inference-only mode.")
-    y_all = torch.full((len(x_df_full),), -1, dtype=torch.long)
-    label_encoder = None
+# Convert to tensors
+x_train = torch.tensor(X_train_scaled, dtype=torch.float)
+x_test = torch.tensor(X_test_scaled, dtype=torch.float)
 
-# === Create KNN Graph ===
-knn = kneighbors_graph(x, n_neighbors=K_NEIGHBORS, include_self=True)
-edge_index = torch.tensor(knn.nonzero(), dtype=torch.long)
+# === Prepare Labels ===
+label_encoder = LabelEncoder()
+y_train = torch.tensor(label_encoder.fit_transform(train_df[LABEL_COLUMN]), dtype=torch.long)
+num_classes = len(label_encoder.classes_)
+
+print(f"\nUsing {num_classes} classes for training")
+print("Class mapping:")
+for i, cls in enumerate(label_encoder.classes_):
+    print(f"  {i}: {cls}")
+
+# === Create KNN Graph for Training Data ===
+print("\nBuilding KNN graph...")
+knn_train = kneighbors_graph(x_train, n_neighbors=K_NEIGHBORS, include_self=True)
+edge_index_train = torch.tensor(knn_train.nonzero(), dtype=torch.long)
+print(f"Created graph with {edge_index_train.shape[1]} edges")
 
 # === GCN Model Definition ===
 class GCN(torch.nn.Module):
@@ -161,163 +187,128 @@ class GCN(torch.nn.Module):
         super().__init__()
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, out_channels)
+        self.dropout = torch.nn.Dropout(0.3)
 
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
         x = F.relu(x)
+        x = self.dropout(x)
         x = self.conv2(x, edge_index)
         return x
 
-# === Prepare Data Object ===
-data = Data(x=x, edge_index=edge_index, y=y_all)
-train_mask = data.y != -1
+    def get_embeddings(self, x, edge_index):
+        # Extract embeddings from first layer
+        return self.conv1(x, edge_index).detach()
 
-# === Train Model if labels are available ===
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# === Setup Device ===
+if USE_CPU:
+    device = torch.device('cpu')
+    print("Using CPU for computation (forced)")
+else:
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
+# === Prepare Training Data ===
+data = Data(x=x_train, edge_index=edge_index_train, y=y_train)
 data = data.to(device)
-num_classes = len(label_encoder.classes_) if label_encoder is not None else 2
-model = GCN(in_channels=x.shape[1], hidden_channels=64, out_channels=num_classes).to(device)
 
-if label_encoder is not None:
-    print(f"Training model with {num_classes} classes...")
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+# === Initialize Model ===
+hidden_dim = min(64, max(32, num_classes * 2))  # Adaptive hidden dimension
+model = GCN(in_channels=x_train.shape[1], hidden_channels=hidden_dim, out_channels=num_classes).to(device)
 
-    model.train()
-    for epoch in range(2000):
+# === Train Model ===
+print(f"\nTraining model with {num_classes} classes...")
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+
+# Compute class weights for imbalanced classes
+class_counts = np.bincount(y_train.cpu().numpy())
+class_weights = 1.0 / (class_counts + 1e-10)  # Add small epsilon to avoid division by zero
+class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
+
+# Batched training
+model.train()
+for epoch in range(150):
+    total_loss = 0
+    # Shuffle indices for better training
+    train_indices = torch.randperm(len(y_train))
+    num_batches = (len(train_indices) + BATCH_SIZE - 1) // BATCH_SIZE
+    
+    for i in range(num_batches):
+        batch_indices = train_indices[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
         optimizer.zero_grad()
         out = model(data.x, data.edge_index)
-        loss = F.cross_entropy(out[train_mask], data.y[train_mask])
+        loss = F.cross_entropy(out[batch_indices], data.y[batch_indices], weight=class_weights)
         loss.backward()
         optimizer.step()
-        if epoch % 20 == 0:
-            print(f"Epoch {epoch:03d}, Loss: {loss.item():.4f}")
-else:
-    print("No labels available for training. Skipping training phase.")
+        total_loss += loss.item()
+    
+    if epoch % 10 == 0:
+        print(f"Epoch {epoch:03d}, Avg Loss: {total_loss/num_batches:.4f}")
 
+# === Create KNN Graph for Testing Data ===
+print("\nBuilding KNN graph for test data...")
+# For efficiency, connect test nodes to their nearest training neighbors
+combined_data = torch.cat([x_train, x_test], dim=0)
+knn_combined = kneighbors_graph(combined_data.cpu().numpy(), n_neighbors=K_NEIGHBORS, include_self=True)
+edge_index_combined = torch.tensor(knn_combined.nonzero(), dtype=torch.long)
+print(f"Created combined graph with {edge_index_combined.shape[1]} edges")
 
-# === Inference ===
+# === Run Inference ===
 model.eval()
+print("\nRunning inference on test data...")
 with torch.no_grad():
-    logits = model(data.x, data.edge_index)
-    preds = logits.argmax(dim=1).cpu().numpy()
-    probs = F.softmax(logits, dim=1).cpu().numpy()
-
-# === Append Predictions ===
-# Identify indices corresponding to test set
-fit_indices = [i for i, idx in enumerate(original_index) if idx >= len(train_df)]
-fit_preds = preds[fit_indices]
-fit_probs = probs[fit_indices]
-
-# Create output dataframe with predictions
-fit_df_cleaned = fit_df.copy()
-if label_encoder is not None:
-    fit_df_cleaned["gnn_predicted_class"] = label_encoder.inverse_transform(fit_preds)
-else:
-    fit_df_cleaned["gnn_predicted_class"] = fit_preds
-fit_df_cleaned["gnn_confidence"] = fit_probs.max(axis=1)
-
-# === Save ===
-fit_df_cleaned.to_csv(output_file, index=False)
-print(f"Saved predictions to {output_file}")
-
-
-
-
-
-
-
-
-
-
-
-# Usage
-# Assuming fit_df_cleaned has true and predicted labels
-y_true = fit_df_cleaned[LABEL_COLUMN]  # True labels
-y_pred = fit_df_cleaned["gnn_predicted_class"]  # Predicted labels
-class_names = label_encoder.classes_  # Class names
-plot_classification_performance(y_true, y_pred, class_names)
-
-
-
-
-
-
-
-
-
-
-
-# Usage
-confidences = fit_df_cleaned["gnn_confidence"].values
-predictions = fit_df_cleaned["gnn_predicted_class"].map(
-    {class_name: i for i, class_name in enumerate(class_names)}).values
-plot_confidence_distribution(confidences, predictions, class_names)
-
-
-
-
-
-
-
-
-
-
-# Usage example - add this to your main code
-fit_indices = np.where(original_index >= len(train_df))[0]  # Get indices of test samples in the dataset
-test_labels = fit_df_cleaned[LABEL_COLUMN].map(
-    {class_name: i for i, class_name in enumerate(class_names)}).values
-visualize_embeddings(model, data, test_labels, class_names, fit_indices)
-
-
-
-
-
-
-
-
-
-# Usage
-feature_importance_analysis(model, data, valid_features)
-
-
-
-
-
-
-
-# Usage
-node_labels = y_all.cpu().numpy()
-node_labels = np.array([label if label != -1 else len(class_names) for label in node_labels])
-class_names_with_unknown = list(class_names) + ["Unknown"]
-visualize_knn_graph_sample(edge_index, node_labels, class_names_with_unknown)
-
-
-
-
-
-
-
-
-
-
-
-
-# Select key astronomical features
-astronomical_features = [
-    "parallax", "pmra", "pmdec", "MAD", "true_amplitude", "true_period",
-    "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag", "z_med_mag-ks_med_mag"
-]
-
-# Filter available features
-available_astro_features = [f for f in astronomical_features if f in fit_df_cleaned.columns]
-plot_feature_class_correlations(fit_df_cleaned, available_astro_features, LABEL_COLUMN)
-
-
-
-
-
-
-# Check if required columns exist
-plot_period_amplitude(fit_df_cleaned, LABEL_COLUMN)
-
-
+    test_data = Data(x=combined_data.to(device), edge_index=edge_index_combined.to(device))
+    logits = model(test_data.x, test_data.edge_index)
+    probs = F.softmax(logits, dim=1)
+    
+    # Extract predictions for test data
+    test_indices = torch.arange(len(x_train), len(combined_data))
+    test_logits = logits[test_indices]
+    test_probs = probs[test_indices]
+    
+    preds = test_logits.argmax(dim=1).cpu().numpy()
+    confs = test_probs.max(dim=1)[0].cpu().numpy()
+
+# === Add Predictions to Test DataFrame ===
+test_df_result = test_df.copy()
+test_df_result["gnn_predicted_class_id"] = preds
+test_df_result["gnn_predicted_class"] = label_encoder.inverse_transform(preds)
+test_df_result["gnn_confidence"] = confs
+
+# === Save Results ===
+test_df_result.to_csv(output_file, index=False)
+print(f"\nSaved predictions to {output_file}")
+
+# === Evaluate if we have ground truth ===
+if LABEL_COLUMN in test_df_result.columns:
+    print("\nEvaluation on test set:")
+    y_true = test_df_result[LABEL_COLUMN]
+    y_pred = test_df_result["gnn_predicted_class"]
+    
+    # Print classification metrics
+    from sklearn.metrics import classification_report, confusion_matrix
+    print(classification_report(y_true, y_pred))
+    
+    # Create visualizations
+    class_names = label_encoder.classes_
+    try:
+        # Create plots if vis.py functions are available
+        plot_classification_performance(y_true, y_pred, class_names)
+        print("Saved confusion matrix visualization to confusion_matrix.png")
+        
+        # Plot confidence distribution
+        plot_confidence_distribution(confs, preds, class_names)
+        print("Saved confidence distribution to confidence_distribution.png")
+        
+        # Plot period-amplitude diagram if those features exist
+        if "true_period" in test_df_result.columns and "true_amplitude" in test_df_result.columns:
+            plot_period_amplitude(test_df_result, "gnn_predicted_class")
+            print("Saved period-amplitude visualization to period_amplitude.png")
+        
+        # Feature importance analysis
+        feature_importance_analysis(model, data, available_features)
+        print("Saved feature importance visualization to feature_importance.png")
+    except Exception as e:
+        print(f"Visualization error: {e}")
+        
+print("\nProcessing complete!")
