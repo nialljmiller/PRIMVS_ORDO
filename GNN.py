@@ -62,6 +62,21 @@ except Exception as e:
     print(f"Failed to load FITS files: {e}")
     sys.exit(1)
 
+
+# Add this after loading the data
+def get_max_prob_class(row):
+    # Define the class probability columns
+    class_cols = ['PQSO', 'PGal', 'Pstar', 'PWD', 'Pbin']
+    # Get the column with max probability
+    max_prob_col = max(class_cols, key=lambda col: row[col])
+    # Return the class name (remove the 'P' prefix)
+    return max_prob_col[1:]  # Remove 'P' from 'PQSO', 'PGal', etc.
+
+# Apply this function to create a new 'true_class' column
+data_df['true_class'] = data_df.apply(get_max_prob_class, axis=1)
+
+
+
 train_size = int(0.7 * len(data_df))
 train_df = data_df[:train_size]
 fit_df = data_df[train_size:]
