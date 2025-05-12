@@ -12,7 +12,6 @@ from sklearn.neighbors import kneighbors_graph
 from astropy.io import fits
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
-
 from vis import *
 
 # === Parse command-line arguments ===
