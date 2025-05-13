@@ -89,24 +89,15 @@ train_classes = train_df[LABEL_COLUMN].value_counts()
 print(f"Found {len(train_classes)} unique classes")
 print(train_classes.head(10))
 
-# Limit to most common classes to prevent memory issues
-if len(train_classes) > MAX_CLASSES:
-    common_classes = train_classes.nlargest(MAX_CLASSES).index.tolist()
-    print(f"\nLimiting to {MAX_CLASSES} most common classes: {common_classes}")
-    
-    # Create new column with common classes or "Other"
-    train_df['class_grouped'] = train_df[LABEL_COLUMN].apply(
-        lambda x: x if x in common_classes else "Other"
-    )
-    test_df['class_grouped'] = test_df[LABEL_COLUMN].apply(
-        lambda x: x if x in common_classes else "Other"
-    )
-    LABEL_COLUMN = 'class_grouped'
-    
-    # Show the distribution of the new classes
-    print("\nDistribution after grouping:")
-    print(train_df[LABEL_COLUMN].value_counts())
+# === Prepare Labels ===
+label_encoder = LabelEncoder()
+y_train = torch.tensor(label_encoder.fit_transform(train_df[LABEL_COLUMN]), dtype=torch.long)
+num_classes = len(label_encoder.classes_)
 
+print(f"\nUsing {num_classes} classes for training")
+print("Class mapping:")
+for i, cls in enumerate(label_encoder.classes_):
+    print(f"  {i}: {cls}")
 # === Identify common features across both datasets ===
 train_features = set(train_df.columns)
 test_features = set(test_df.columns)
