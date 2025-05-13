@@ -40,7 +40,7 @@ EMBEDDING_FEATURES = [str(i) for i in range(128)]
 FEATURE_COLUMNS = EMBEDDING_FEATURES + BASE_FEATURES
 
 # Classification labels
-LABEL_COLUMN = "true_class"
+LABEL_COLUMN = "best_class_name"
 
 # Graph and model configuration
 K_NEIGHBORS = 8  # Reduced from 15 to save memory
