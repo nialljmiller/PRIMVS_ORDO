@@ -235,10 +235,10 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
 def main():
     if len(sys.argv) < 3:
         print("Usage: python xgb_classify.py <training_fits_file> <testing_fits_file> [output_file]")
-                training_file = "../PRIMVS/PRIMVS_P_GAIA.fits"
+        training_file = "../PRIMVS/PRIMVS_P_GAIA.fits"
         testing_file = "../PRIMVS/PRIMVS_P.fits"
-        output_file = sys.argv[3] if len(sys.argv) > 3 else "xgb_predictions.csv"
-        print("Proceeding with:  primvs.fits primvs_gaia.fits predictions.csv")
+        output_file = "xgb_predictions.csv"
+        print("Proceeding withdefaults")
     else:
         training_file = sys.argv[1] if len(sys.argv) > 1 else "../PRIMVS/PRIMVS_P_GAIA.fits"
         testing_file = sys.argv[2] if len(sys.argv) > 2 else "../PRIMVS/PRIMVS_P.fits"
