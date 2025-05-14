@@ -244,9 +244,6 @@ def main():
         testing_file = sys.argv[2] if len(sys.argv) > 2 else "../PRIMVS/PRIMVS_P.fits"
         output_file = sys.argv[3] if len(sys.argv) > 3 else "xgb_predictions.csv"
 
-    training_file = sys.argv[1]
-    testing_file = sys.argv[2]
-    output_file = sys.argv[3] if len(sys.argv) > 3 else "xgb_predictions.csv"
 
     # Load data
     train_df = load_fits_to_dataframe(training_file)
