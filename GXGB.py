@@ -8,6 +8,18 @@ from sklearn.metrics import classification_report
 from astropy.io import fits
 import matplotlib.pyplot as plt
 import seaborn as sns
+# Import visualization functions
+from vis import (
+    plot_classification_performance,
+    plot_period_amplitude,
+    plot_feature_class_correlations,
+    plot_confidence_distribution,
+    plot_xgb_feature_importance,
+    plot_xgb_class_probability_heatmap,
+    plot_xgb_top2_confidence_scatter,
+    plot_astronomical_map,
+    plot_misclassification_analysis
+)
 
 # === Load FITS Files ===
 def load_fits_to_dataframe(fits_path):
@@ -64,10 +76,13 @@ def select_features(train_df, test_df):
         "l", "b", "parallax", "pmra", "pmdec"
     ]
     
+    # Include contrastive learning embeddings (128 dimensions)
+    EMBEDDING_FEATURES = [str(i) for i in range(128)]
+    
     # Combine all feature groups
     ALL_FEATURES = (VARIABILITY_FEATURES + COLOR_FEATURES + MAGNITUDE_FEATURES + 
                    PERIOD_FEATURES + PERIODOGRAM_FEATURES + QUALITY_FEATURES + 
-                   POSITION_FEATURES)
+                   POSITION_FEATURES + EMBEDDING_FEATURES)
     
     # Filter for features present in both datasets
     train_features = set(train_df.columns)
@@ -161,23 +176,60 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
     for feature, score in sorted_importance[:20]:
         print(f"  {feature}: {score:.4f}")
     
-    # Create feature importance plot
-    plt.figure(figsize=(12, 8))
-    features = [x[0] for x in sorted_importance[:20]]
-    scores = [x[1] for x in sorted_importance[:20]]
-    sns.barplot(x=scores, y=features)
-    plt.title('Top 20 Feature Importance (gain)')
-    plt.tight_layout()
-    plt.savefig('xgb_feature_importance.png', dpi=300)
+    # Create enhanced visualizations
+    feature_names = [x[0] for x in sorted_importance]
+    importance_values = [x[1] for x in sorted_importance]
+    
+    # Use the enhanced feature importance plot
+    plot_xgb_feature_importance(feature_names, importance_values, top_n=20)
+    print("Saved feature importance visualization to xgb_feature_importance.png")
     
     # Evaluate if ground truth is available
     if label_col in test_df_result.columns:
         print("\nEvaluation on test set:")
         y_true = test_df_result[label_col]
         y_pred = test_df_result["xgb_predicted_class"]
+        
+        # Print classification report
         print(classification_report(y_true, y_pred))
+        
+        # Plot confusion matrix
+        class_names = label_encoder.classes_
+        plot_classification_performance(y_true, y_pred, class_names)
+        print("Saved confusion matrix to confusion_matrix.png")
+        
+        # Plot confidence distribution
+        plot_confidence_distribution(confs, preds, class_names)
+        print("Saved confidence distribution plot to confidence_distribution.png")
+        
+        # Plot class probability heatmap for a subset of samples
+        plot_xgb_class_probability_heatmap(probs, class_names)
+        print("Saved class probability heatmap to xgb_class_probabilities.png")
+        
+        # Plot confidence analysis
+        plot_xgb_top2_confidence_scatter(probs, preds, class_names)
+        print("Saved confidence analysis plot to xgb_confidence_analysis.png")
+        
+        # Plot misclassification analysis
+        plot_misclassification_analysis(y_true, y_pred, probs, class_names)
+        print("Saved misclassification analysis to misclassification_analysis.png")
+        
+        # If period and amplitude features exist, create Bailey diagram
+        if "true_period" in test_df_result.columns and "true_amplitude" in test_df_result.columns:
+            plot_period_amplitude(test_df_result, "xgb_predicted_class")
+            print("Saved period-amplitude diagram to period_amplitude.png")
+        
+        # Create Galactic map if l and b coordinates exist
+        if "l" in test_df_result.columns and "b" in test_df_result.columns:
+            plot_astronomical_map(test_df_result, "xgb_predicted_class")
+            print("Saved galactic distribution map to galactic_distribution.png")
+        
+        # Plot feature distributions by class
+        selected_features = features[:12] if len(features) > 12 else features
+        plot_feature_class_correlations(test_df_result, selected_features, "xgb_predicted_class")
+        print("Saved feature class distributions to feature_class_distributions.png")
     
-    return model, label_encoder
+    return model, label_encoder, probs
 
 # === Main Function ===
 def main():
@@ -186,8 +238,8 @@ def main():
         print("Example: python xgb_classify.py primvs.fits primvs_gaia.fits predictions.csv")
         sys.exit(1)
     
-    training_file = sys.argv[1]
-    testing_file = sys.argv[2]
+    training_file = sys.argv[1] if len(sys.argv) > 2 else "../PRIMVS/PRIMVS_P_GAIA.fits"
+    testing_file = sys.argv[2] if len(sys.argv) > 2 else "../PRIMVS/PRIMVS_P.fits"
     output_file = sys.argv[3] if len(sys.argv) > 3 else "xgb_predictions.csv"
     
     # Load data
@@ -208,7 +260,7 @@ def main():
     features = select_features(train_df, test_df)
     
     # Train and predict
-    model, label_encoder = train_xgboost_gpu(train_df, test_df, features, label_col, output_file)
+    model, label_encoder, probs = train_xgboost_gpu(train_df, test_df, features, label_col, output_file)
     
     print("\nProcessing complete!")
 

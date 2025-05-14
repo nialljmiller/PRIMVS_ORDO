@@ -15,6 +15,266 @@ from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 
 
+def plot_xgb_feature_importance(feature_names, importance_scores, top_n=20):
+    """
+    Create a better visualization of XGBoost feature importance.
+    
+    Parameters:
+    -----------
+    feature_names : list
+        List of feature names
+    importance_scores : list
+        List of importance scores corresponding to the features
+    top_n : int
+        Number of top features to display
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+    
+    # Sort by importance
+    indices = np.argsort(importance_scores)[::-1]
+    
+    # Select top N features
+    top_indices = indices[:top_n]
+    top_features = [feature_names[i] for i in top_indices]
+    top_scores = [importance_scores[i] for i in top_indices]
+    
+    # Create horizontal bar plot
+    plt.figure(figsize=(12, 10))
+    plt.barh(range(len(top_scores)), top_scores, align='center', color='skyblue', edgecolor='navy', alpha=0.8)
+    plt.yticks(range(len(top_features)), top_features)
+    plt.xlabel('Importance Score (gain)')
+    plt.title('XGBoost Feature Importance', fontsize=16)
+    plt.grid(axis='x', alpha=0.3)
+    
+    # Add values to the end of each bar
+    for i, v in enumerate(top_scores):
+        plt.text(v + v*0.01, i, f'{v:.4f}', va='center')
+    
+    plt.tight_layout()
+    plt.savefig('xgb_feature_importance.png', dpi=300)
+    plt.close()
+
+def plot_xgb_class_probability_heatmap(probs, class_names, num_samples=50):
+    """
+    Plot a heatmap of class probabilities for a subset of test samples.
+    
+    Parameters:
+    -----------
+    probs : numpy.ndarray
+        Probability matrix with shape (n_samples, n_classes)
+    class_names : list
+        List of class names
+    num_samples : int
+        Number of random samples to show in the heatmap
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+    
+    # Select a random subset of samples
+    if probs.shape[0] > num_samples:
+        indices = np.random.choice(probs.shape[0], num_samples, replace=False)
+        sample_probs = probs[indices]
+    else:
+        sample_probs = probs
+        num_samples = probs.shape[0]
+    
+    # Create heatmap
+    plt.figure(figsize=(12, 10))
+    ax = sns.heatmap(sample_probs, cmap='viridis', 
+                    yticklabels=range(1, num_samples+1),
+                    xticklabels=class_names)
+    plt.xlabel('Classes')
+    plt.ylabel('Samples')
+    plt.title('Class Probabilities Heatmap', fontsize=16)
+    
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig('xgb_class_probabilities.png', dpi=300)
+    plt.close()
+
+def plot_xgb_top2_confidence_scatter(probs, preds, class_names):
+    """
+    Create a scatter plot showing the confidence of top 1 vs top 2 predictions.
+    This helps visualize the model's confidence in its predictions.
+    
+    Parameters:
+    -----------
+    probs : numpy.ndarray
+        Probability matrix with shape (n_samples, n_classes)
+    preds : numpy.ndarray
+        Predicted class indices
+    class_names : list
+        List of class names
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Sort probabilities to get top 2 values for each sample
+    sorted_probs = np.sort(probs, axis=1)[:, ::-1]
+    top1_confidence = sorted_probs[:, 0]  # Highest probability
+    top2_confidence = sorted_probs[:, 1]  # Second highest probability
+    confidence_gap = top1_confidence - top2_confidence  # Gap between top 2 confidences
+    
+    # Create scatter plot
+    plt.figure(figsize=(12, 10))
+    
+    # Color points by predicted class
+    for i, class_name in enumerate(class_names):
+        mask = preds == i
+        if np.any(mask):  # Check if we have any predictions for this class
+            plt.scatter(top1_confidence[mask], 
+                       confidence_gap[mask], 
+                       alpha=0.6, s=50, label=class_name)
+    
+    plt.xlabel('Top Class Confidence')
+    plt.ylabel('Confidence Gap (Top1 - Top2)')
+    plt.title('Model Decision Confidence Analysis', fontsize=16)
+    plt.grid(alpha=0.3)
+    
+    # Add legend with reasonable size based on number of classes
+    num_classes = len(class_names)
+    if num_classes <= 10:
+        plt.legend(fontsize=10)
+    elif num_classes <= 20:
+        plt.legend(fontsize=8, ncol=2)
+    else:
+        plt.legend(fontsize=6, ncol=3)
+    
+    plt.tight_layout()
+    plt.savefig('xgb_confidence_analysis.png', dpi=300)
+    plt.close()
+
+def plot_astronomical_map(df, class_column, l_column='l', b_column='b', sample_size=10000):
+    """
+    Create a plot of objects in Galactic coordinates, colored by class.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame containing the data
+    class_column : str
+        Column name for the class labels
+    l_column : str
+        Column name for Galactic longitude
+    b_column : str
+        Column name for Galactic latitude
+    sample_size : int
+        Number of points to sample (for large datasets)
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    
+    # Sample data if needed
+    if len(df) > sample_size:
+        df_sample = df.sample(sample_size, random_state=42)
+    else:
+        df_sample = df
+    
+    # Create figure
+    plt.figure(figsize=(14, 10))
+    
+    # Get unique classes for coloring
+    unique_classes = df_sample[class_column].unique()
+    
+    # Create scatter plot grouped by class
+    for i, class_name in enumerate(unique_classes):
+        subset = df_sample[df_sample[class_column] == class_name]
+        plt.scatter(subset[l_column], subset[b_column], 
+                   s=10, alpha=0.7, label=class_name)
+    
+    plt.xlabel('Galactic Longitude (l)')
+    plt.ylabel('Galactic Latitude (b)')
+    plt.title('Spatial Distribution of Classes in the Galaxy', fontsize=16)
+    
+    # Add horizontal line at b=0 to indicate Galactic plane
+    plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+    
+    # Customize legend based on number of classes
+    num_classes = len(unique_classes)
+    if num_classes <= 8:
+        plt.legend(fontsize=10)
+    elif num_classes <= 15:
+        plt.legend(fontsize=8, ncol=2)
+    else:
+        plt.legend(fontsize=6, ncol=3)
+    
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('galactic_distribution.png', dpi=300)
+    plt.close()
+
+def plot_misclassification_analysis(y_true, y_pred, probs, class_names):
+    """
+    Analyze and visualize patterns in misclassifications.
+    
+    Parameters:
+    -----------
+    y_true : array-like
+        True class labels
+    y_pred : array-like
+        Predicted class labels
+    probs : numpy.ndarray
+        Probability matrix with shape (n_samples, n_classes)
+    class_names : list
+        List of class names
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import seaborn as sns
+    from sklearn.metrics import confusion_matrix
+    
+    # Identify misclassified samples
+    misclassified = y_true != y_pred
+    
+    # Plot confusion matrix
+    plt.figure(figsize=(12, 10))
+    cm = confusion_matrix(y_true, y_pred, normalize='true')
+    
+    # Create mask for diagonal (correctly classified) to highlight misclassifications
+    mask = np.eye(len(class_names), dtype=bool)
+    
+    # Plot the confusion matrix with a diverging colormap
+    sns.heatmap(cm, annot=True, fmt='.2f', cmap='coolwarm', 
+               xticklabels=class_names, yticklabels=class_names,
+               mask=mask, cbar_kws={'label': 'Fraction of samples'})
+    
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    plt.title('Misclassification Analysis (Off-diagonal Elements)', fontsize=16)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig('misclassification_analysis.png', dpi=300)
+    plt.close()
+    
+    # Get confidence of misclassified samples
+    if np.any(misclassified):
+        conf_misc = np.max(probs[misclassified], axis=1)
+        
+        # Plot histogram of confidences for misclassified samples
+        plt.figure(figsize=(10, 8))
+        plt.hist(conf_misc, bins=20, alpha=0.7, color='red', 
+                edgecolor='black', label='Misclassified')
+        
+        # Add histogram of correctly classified samples for comparison
+        conf_correct = np.max(probs[~misclassified], axis=1)
+        plt.hist(conf_correct, bins=20, alpha=0.5, color='blue', 
+                edgecolor='black', label='Correctly classified')
+        
+        plt.xlabel('Model Confidence')
+        plt.ylabel('Number of Samples')
+        plt.title('Confidence Distribution: Misclassified vs. Correctly Classified', fontsize=16)
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('misclassification_confidence.png', dpi=300)
+        plt.close()
+
+
 def plot_classification_performance(y_true, y_pred, class_names):
     # Generate confusion matrix
     cm = confusion_matrix(y_true, y_pred)
