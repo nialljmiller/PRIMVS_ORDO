@@ -212,17 +212,12 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
 
         # Plot misclassification analysis
         plot_misclassification_analysis(y_true, y_pred, probs, class_names)
-        print("Saved misclassification analysis to misclassification_analysis.png")
+        plot_period_amplitude(test_df_result, "xgb_predicted_class")
+        plot_hr_diagram(test_df_result, "xgb_predicted_class")
+        plot_galactic_distribution(test_df_result, "xgb_predicted_class")
+        plot_color_color(test_df_result, "xgb_predicted_class")
+        plot_astronomical_map(test_df_result, "xgb_predicted_class")
 
-        # If period and amplitude features exist, create Bailey diagram
-        if "true_period" in test_df_result.columns and "true_amplitude" in test_df_result.columns:
-            plot_period_amplitude(test_df_result, "xgb_predicted_class")
-            print("Saved period-amplitude diagram to period_amplitude.png")
-
-        # Create Galactic map if l and b coordinates exist
-        if "l" in test_df_result.columns and "b" in test_df_result.columns:
-            plot_astronomical_map(test_df_result, "xgb_predicted_class")
-            print("Saved galactic distribution map to galactic_distribution.png")
 
         # Plot feature distributions by class
         selected_features = features[:12] if len(features) > 12 else features
