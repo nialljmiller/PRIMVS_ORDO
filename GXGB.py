@@ -9,17 +9,7 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 import seaborn as sns
 # Import visualization functions
-from vis import (
-    plot_classification_performance,
-    plot_period_amplitude,
-    plot_feature_class_correlations,
-    plot_confidence_distribution,
-    plot_xgb_feature_importance,
-    plot_xgb_class_probability_heatmap,
-    plot_xgb_top2_confidence_scatter,
-    plot_astronomical_map,
-    plot_misclassification_analysis
-)
+from vis import *
 
 # === Load FITS Files ===
 def load_fits_to_dataframe(fits_path):

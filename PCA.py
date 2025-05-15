@@ -39,13 +39,18 @@ def load_data(filepath):
     print(f"Loaded {len(df)} records with {len(df.columns)} features")
     return df
 
+
+
+
+
 def prepare_data(df, features, scale_method='robust'):
     """
-    Prepare data for PCA with advanced feature-specific preprocessing
+    Prepare data for PCA with advanced feature-specific preprocessing,
+    automatic percentile capping, and correlation handling
     """
     # Filter to only requested features
     available_features = [f for f in features if f in df.columns]
-    print(f"Using {len(available_features)} features: {available_features}")
+    print(f"Using {len(available_features)} features initially: {available_features}")
     
     # Create a copy with only needed columns
     df_selected = df[available_features].copy()
@@ -60,10 +65,32 @@ def prepare_data(df, features, scale_method='robust'):
         columns=df_selected.columns
     )
     
-    # Create a DataFrame to store transformed data
-    df_transformed = df_imputed.copy()
+    # ===== 1. PERCENTILE CAPPING =====
+    # Cap values at 1st and 99th percentiles to handle extreme outliers
+    print("\nPerforming percentile capping (1-99):")
+    df_capped = df_imputed.copy()
     
-    # Apply feature-specific transformations based on data characteristics
+    for feature in df_capped.columns:
+        # Skip embedding features (dimensions from contrastive learning)
+        if feature.isdigit():
+            continue
+            
+        # Calculate 1st and 99th percentiles
+        p01 = np.nanpercentile(df_capped[feature].values, 1)
+        p99 = np.nanpercentile(df_capped[feature].values, 99)
+        
+        # Count values outside this range
+        n_outliers = ((df_capped[feature] < p01) | (df_capped[feature] > p99)).sum()
+        if n_outliers > 0:
+            # Cap values
+            df_capped[feature] = df_capped[feature].clip(p01, p99)
+            pct_outliers = 100 * n_outliers / len(df_capped)
+            print(f"  Capped {feature}: {n_outliers} outliers ({pct_outliers:.2f}%)")
+    
+    # ===== 2. FEATURE-SPECIFIC TRANSFORMATIONS =====
+    print("\nApplying feature-specific transformations:")
+    df_transformed = df_capped.copy()
+    
     for feature in df_transformed.columns:
         data = df_transformed[feature].values
         
@@ -83,14 +110,14 @@ def prepare_data(df, features, scale_method='robust'):
             min_positive = max(np.nanmin(data[data > 0]), 1e-10)
             data[data <= 0] = min_positive / 10
             data = np.log10(data)
-            print(f"Applied log10 transform to {feature} (astronomical convention)")
+            print(f"  Applied log10 transform to {feature} (astronomical convention)")
             
         elif feature == 'true_amplitude':
             # Log transform for amplitude (astronomical convention)
             min_positive = max(np.nanmin(data[data > 0]), 1e-10)
             data[data <= 0] = min_positive / 10
             data = np.log10(data)
-            print(f"Applied log10 transform to {feature} (astronomical convention)")
+            print(f"  Applied log10 transform to {feature} (astronomical convention)")
             
         elif feature == 'best_fap':
             # FAP is already between 0-1, but log transform can help highlight differences
@@ -98,7 +125,7 @@ def prepare_data(df, features, scale_method='robust'):
             min_positive = max(np.nanmin(data[data > 0]), 1e-10)
             data[data <= 0] = min_positive / 10
             data = -np.log10(data)  # Negative log transform makes smaller FAP values larger (better)
-            print(f"Applied -log10 transform to {feature} (higher values = better significance)")
+            print(f"  Applied -log10 transform to {feature} (higher values = better significance)")
             
         elif abs(skewness) > 2:
             # Highly skewed - use log transform
@@ -107,42 +134,83 @@ def prepare_data(df, features, scale_method='robust'):
                 # Add offset to make all values positive
                 offset = abs(np.nanmin(data)) + 1e-10
                 data = np.log1p(data + offset)
-                print(f"Applied log1p transform with offset to {feature} (skewness: {skewness:.2f})")
+                print(f"  Applied log1p transform with offset to {feature} (skewness: {skewness:.2f})")
             else:
                 data = np.log1p(data)
-                print(f"Applied log1p transform to {feature} (skewness: {skewness:.2f})")
+                print(f"  Applied log1p transform to {feature} (skewness: {skewness:.2f})")
                 
         elif abs(skewness) > 1:
             # Moderately skewed - use square root or cube root
             if np.nanmin(data) < 0:
                 # Use cube root for negative values
                 data = np.cbrt(data)
-                print(f"Applied cube root transform to {feature} (skewness: {skewness:.2f})")
+                print(f"  Applied cube root transform to {feature} (skewness: {skewness:.2f})")
             else:
                 # Use square root for positive values
                 data = np.sqrt(np.abs(data)) * np.sign(data)
-                print(f"Applied square root transform to {feature} (skewness: {skewness:.2f})")
+                print(f"  Applied square root transform to {feature} (skewness: {skewness:.2f})")
                 
         elif feature_range > 1000:
             # Very large range - use log transform
             if np.nanmin(data) <= 0:
                 offset = abs(np.nanmin(data)) + 1e-10
                 data = np.log1p(data + offset)
-                print(f"Applied log1p transform to {feature} (large range: {feature_range:.1e})")
+                print(f"  Applied log1p transform to {feature} (large range: {feature_range:.1e})")
             else:
                 data = np.log1p(data)
-                print(f"Applied log1p transform to {feature} (large range: {feature_range:.1e})")
+                print(f"  Applied log1p transform to {feature} (large range: {feature_range:.1e})")
         
         # Update the transformed DataFrame
         df_transformed[feature] = data
     
-    # Now apply final scaling
+    # ===== 3. CORRELATION HANDLING =====
+    # Automatically detect and remove highly correlated features
+    corr_threshold = 0.85  # Correlation threshold for considering features as redundant
+    
+    # Calculate correlation matrix (excluding embedding features)
+    non_embedding_cols = [col for col in df_transformed.columns if not col.isdigit()]
+    corr_matrix = df_transformed[non_embedding_cols].corr().abs()
+    
+    # Create a mask for the upper triangle
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    
+    # Find features with correlation greater than threshold
+    to_drop = []
+    
+    print("\nChecking for correlated features (threshold: 0.85):")
+    for col in upper.columns:
+        # Find correlated features for this column
+        correlated = upper[col][upper[col] > corr_threshold].index.tolist()
+        if correlated:
+            # Calculate variance for each feature to decide which to keep
+            variances = {feature: df_transformed[feature].var() for feature in [col] + correlated}
+            variances_sorted = sorted(variances.items(), key=lambda x: x[1], reverse=True)
+            
+            # Keep the feature with highest variance, add others to drop list
+            keep_feature = variances_sorted[0][0]
+            drop_features = [f for f in [col] + correlated if f != keep_feature and f not in to_drop]
+            
+            if drop_features:
+                for f in drop_features:
+                    corr_val = upper[col][f] if f in upper[col] else upper[f][col]
+                    print(f"  {f} and {keep_feature} are correlated (r={corr_val:.3f}). Keeping {keep_feature} (higher variance)")
+                to_drop.extend(drop_features)
+    
+    # Remove correlated features
+    if to_drop:
+        print(f"  Removing {len(to_drop)} correlated features: {to_drop}")
+        df_transformed = df_transformed.drop(columns=to_drop)
+    else:
+        print("  No highly correlated features found")
+    
+    # ===== 4. FINAL SCALING =====
+    # Apply final scaling
     if scale_method == 'robust':
         scaler = RobustScaler(quantile_range=(5, 95))  # Use 5-95 percentile range to be more robust
-        print("Using robust scaling with 5-95 percentile range")
+        print("\nUsing robust scaling with 5-95 percentile range")
     else:
         scaler = StandardScaler()
-        print("Using standard scaling (z-score normalization)")
+        print("\nUsing standard scaling (z-score normalization)")
     
     # Apply scaling to all features
     df_scaled = pd.DataFrame(
@@ -150,22 +218,21 @@ def prepare_data(df, features, scale_method='robust'):
         columns=df_transformed.columns
     )
     
-    # Remove any remaining infinities or NaNs (shouldn't be any, but just in case)
+    # Remove any remaining infinities or NaNs
     df_scaled.replace([np.inf, -np.inf], np.nan, inplace=True)
     
     # If any NaNs remain, fill with 0 (mean of scaled data)
     df_scaled.fillna(0, inplace=True)
     
-    # Check for any remaining issues
-    if df_scaled.isna().any().any():
-        print("Warning: NaN values remain after preprocessing")
+    # Print final feature count
+    print(f"\nFinal feature set: {len(df_scaled.columns)} features")
     
-    # Check for extreme values that might dominate PCA
-    max_abs = df_scaled.abs().max().max()
-    if max_abs > 100:
-        print(f"Warning: Extreme values detected (max absolute value: {max_abs:.1f})")
-        
     return df_scaled
+
+
+
+
+
 
 def apply_pca(data, n_components=2):
     """
