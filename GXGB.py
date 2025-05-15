@@ -184,45 +184,45 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
     plot_xgb_feature_importance(feature_names, importance_values, top_n=20)
     print("Saved feature importance visualization to xgb_feature_importance.png")
 
+    print("\nEvaluation on test set:")
+    y_true = test_df_result[label_col]
+    y_pred = test_df_result["xgb_predicted_class"]
+
+    # Print classification report
+    print(classification_report(y_true, y_pred))
+
+
+    # Plot confidence distribution
+    plot_confidence_distribution(confs, preds, class_names)
+    print("Saved confidence distribution plot to confidence_distribution.png")
+
+    # Plot class probability heatmap for a subset of samples
+    plot_xgb_class_probability_heatmap(probs, class_names)
+    print("Saved class probability heatmap to xgb_class_probabilities.png")
+
+    # Plot confidence analysis
+    plot_xgb_top2_confidence_scatter(probs, preds, class_names)
+    print("Saved confidence analysis plot to xgb_confidence_analysis.png")
+
+    # Plot misclassification analysis
+    plot_period_amplitude(test_df_result, "xgb_predicted_class")
+    plot_hr_diagram(test_df_result, "xgb_predicted_class")
+    plot_galactic_distribution(test_df_result, "xgb_predicted_class")
+    plot_color_color(test_df_result, "xgb_predicted_class")
+    plot_astronomical_map(test_df_result, "xgb_predicted_class")
+    # Plot feature distributions by class
+    selected_features = features[:12] if len(features) > 12 else features
+    plot_feature_class_correlations(test_df_result, selected_features, "xgb_predicted_class")
+    print("Saved feature class distributions to feature_class_distributions.png")
+
     # Evaluate if ground truth is available
     if label_col in test_df_result.columns:
-        print("\nEvaluation on test set:")
-        y_true = test_df_result[label_col]
-        y_pred = test_df_result["xgb_predicted_class"]
-
-        # Print classification report
-        print(classification_report(y_true, y_pred))
-
         # Plot confusion matrix
         class_names = label_encoder.classes_
         plot_classification_performance(y_true, y_pred, class_names)
         print("Saved confusion matrix to confusion_matrix.png")
-
-        # Plot confidence distribution
-        plot_confidence_distribution(confs, preds, class_names)
-        print("Saved confidence distribution plot to confidence_distribution.png")
-
-        # Plot class probability heatmap for a subset of samples
-        plot_xgb_class_probability_heatmap(probs, class_names)
-        print("Saved class probability heatmap to xgb_class_probabilities.png")
-
-        # Plot confidence analysis
-        plot_xgb_top2_confidence_scatter(probs, preds, class_names)
-        print("Saved confidence analysis plot to xgb_confidence_analysis.png")
-
-        # Plot misclassification analysis
         plot_misclassification_analysis(y_true, y_pred, probs, class_names)
-        plot_period_amplitude(test_df_result, "xgb_predicted_class")
-        plot_hr_diagram(test_df_result, "xgb_predicted_class")
-        plot_galactic_distribution(test_df_result, "xgb_predicted_class")
-        plot_color_color(test_df_result, "xgb_predicted_class")
-        plot_astronomical_map(test_df_result, "xgb_predicted_class")
 
-
-        # Plot feature distributions by class
-        selected_features = features[:12] if len(features) > 12 else features
-        plot_feature_class_correlations(test_df_result, selected_features, "xgb_predicted_class")
-        print("Saved feature class distributions to feature_class_distributions.png")
 
     return model, label_encoder, probs
 
