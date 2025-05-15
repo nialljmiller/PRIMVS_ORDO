@@ -413,7 +413,7 @@ def save_pca_data(pca_df, original_df, pca_model, output_file='pca_results.csv')
 def main():
     # Hard-coded parameters
     input_file = '../PRIMVS/PRIMVS_P.fits'  # Change this to your input file path
-    output_dir = './figures'
+    output_dir = './pca_figures'
     output_file = 'pca_results.csv'
     n_components = 10
     sample_size = 100000  # Set to None to use all data
