@@ -119,7 +119,7 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
         'tree_method': 'gpu_hist',       # Use GPU for training
         'predictor': 'gpu_predictor',    # Use GPU for prediction
         'gpu_id': 0,                     # Specify which GPU to use
-        'max_bin': 256                   # Optimization for GPU
+        'max_bin': 512                   # Optimization for GPU
     }
 
     # Print class distribution and weights
@@ -134,7 +134,7 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
     model = xgb.train(
         params,
         dtrain,
-        num_boost_round=500,      # Increase for better performance if time permits
+        num_boost_round=2000,      # Increase for better performance if time permits
         evals=[(dtrain, 'train')],
         verbose_eval=50,          # Print evaluation every 50 rounds
     )
@@ -200,6 +200,10 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
     plot_xgb_class_probability_heatmap(probs, class_names)
     plot_xgb_top2_confidence_scatter(probs, preds, class_names)
 
+    # In GXGB.py after model training
+    plot_bailey_diagram(test_df_result, "xgb_predicted_class")
+    plot_galactic_coords(test_df_result, "xgb_predicted_class")
+    plot_confidence_entropy(test_df_result, "xgb_predicted_class")
 
     # Evaluate if ground truth is available
     if label_col in test_df_result.columns:

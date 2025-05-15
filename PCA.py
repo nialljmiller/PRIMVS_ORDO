@@ -416,7 +416,7 @@ def main():
     output_dir = './pca_figures'
     output_file = 'pca_results.csv'
     n_components = 10
-    sample_size = 100000  # Set to None to use all data
+    sample_size = None#100000  # Set to None to use all data
     
     # List of features to use (from Table 4 in PRIMVS paper + the key metrics you wanted)
     features = [

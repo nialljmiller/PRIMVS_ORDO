@@ -14,8 +14,42 @@ from astropy.io import fits
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import matplotlib.cm as cm
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.ndimage import zoom, gaussian_filter
+import pandas as pd
+
+
+# Set global figure parameters for better readability in publications
+def set_plot_style(large_text=False):
+    """Set the plot style for publication-quality figures"""
+    plt.rcParams['figure.figsize'] = [8, 6]  # Default figure size
+    plt.rcParams['figure.dpi'] = 100  # Default figure DPI
+    plt.rcParams['savefig.dpi'] = 300  # DPI for saved figures
+    
+    # Text size settings
+    base_size = 14
+    if large_text:
+        base_size = 18
+        
+    plt.rcParams['font.size'] = base_size
+    plt.rcParams['axes.labelsize'] = base_size + 2  # Axis labels
+    plt.rcParams['axes.titlesize'] = base_size + 4  # Axis title
+    plt.rcParams['xtick.labelsize'] = base_size + 2  # X-axis tick labels
+    plt.rcParams['ytick.labelsize'] = base_size + 2  # Y-axis tick labels
+    plt.rcParams['legend.fontsize'] = base_size - 2  # Legend
+    plt.rcParams['axes.linewidth'] = 1.5  # Axis line thickness
+    
+    # Line widths for plots
+    plt.rcParams['lines.linewidth'] = 2
+    plt.rcParams['lines.markersize'] = 8  # Marker size for plot markers
+    
+    # Colors and grid
+    plt.rcParams['axes.facecolor'] = 'white'  # Axes background color
+    plt.rcParams['axes.edgecolor'] = 'black'  # Axes edge color
+    plt.rcParams['axes.grid'] = False  # Disable grid by default
+    plt.rcParams['grid.alpha'] = 0.5  # Grid line transparency
+    plt.rcParams['grid.color'] = "grey"  # Grid line color
 
 
 def plot_classification_performance(y_true, y_pred, class_names):
@@ -801,3 +835,341 @@ def plot_misclassification_analysis(y_true, y_pred, probs, class_names):
     plt.tight_layout()
     plt.savefig('class_figures/misclassification_confusion_matrix.png', dpi=300)
     #plt.show()
+
+# New functions from paste.txt, adapted for GXGB.py
+
+def plot_galactic_coords(df, class_column, output_dir='class_figures', min_prob=0.7, min_confidence=0.9, max_entropy=0.2):
+    """
+    Create a scatter plot of stars in galactic coordinates colored by class type.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The dataframe containing the data
+    class_column : str
+        The column name containing class labels
+    output_dir : str, optional
+        Directory to save output figures, default='class_figures'
+    min_prob : float, optional
+        Minimum probability threshold, default=0.7
+    min_confidence : float, optional
+        Minimum confidence metric threshold, default=0.9
+    max_entropy : float, optional
+        Maximum entropy threshold, default=0.2
+    """
+    # Set up figure parameters
+    set_plot_style(large_text=True)
+    plt.rcParams['legend.fontsize'] = 15  # Specific legend size
+    
+    # Create a copy to avoid modifying the original
+    df = df.copy()
+    
+    # Apply filters based on confidence thresholds
+    prob_col = class_column.replace('predicted_class', 'confidence')
+    if prob_col in df.columns:
+        df = df[df[prob_col] > min_prob]
+    
+    # Additional confidence columns if they exist
+    if 'variable_confidence_metric' in df.columns:
+        df = df[df['variable_confidence_metric'] > min_confidence]
+    if 'variable_entropy' in df.columns:
+        df = df[df['variable_entropy'] < max_entropy]
+        
+    # Sample data to avoid overcrowding
+    sampled_df = df.groupby(class_column).apply(
+        lambda x: x.nlargest(n=min(len(x), 100000), columns=prob_col)
+    ).reset_index(drop=True)
+    
+    # Create categorical encoding for class types
+    sampled_df['type_code'] = pd.Categorical(sampled_df[class_column]).codes
+    
+    # Set up colors and markers for different classes
+    unique_types = sampled_df[class_column].unique()
+    colors = ['red', 'k', 'darkgreen', 'yellowgreen', 'plum', 'goldenrod', 'fuchsia', 'navy', 'turquoise', 'aqua', 'k']
+    markers = ['o', '^', 'X', '*', 's', 'P', '^', 'D', '<', '>']
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(12, 9))
+    legend_handles = []
+    
+    for i, var_type in enumerate(unique_types):
+        type_df = sampled_df[sampled_df[class_column] == var_type]
+        
+        # Customize appearance based on class
+        alpha = 0.7
+        s = 2
+        if i in [0, 3, 4, 5]:
+            alpha = 1
+        if i in [0, 3, 5]:
+            s = 5
+            
+        # Plot the class
+        plt.scatter(type_df['l'], type_df['b'], 
+                   color=colors[i % len(colors)], 
+                   marker=markers[i % len(markers)], 
+                   label=var_type, s=s, alpha=alpha)
+        
+        # Add to legend
+        legend_handles.append(plt.Line2D([0], [0], marker=markers[i % len(markers)], 
+                                       color='w', markerfacecolor=colors[i % len(colors)], 
+                                       markersize=s*4, label=var_type))
+    
+    # Customize axes
+    ax.xaxis.tick_top()  # Move x-axis to the top
+    ax.xaxis.set_label_position('top')  # Move x-axis label to the top
+    ax.set_xlabel('Galactic longitude (deg)')
+    ax.set_ylabel('Galactic latitude (deg)')
+    
+    # Set axis limits
+    ax.set_xlim(min(sampled_df['l'].values), max(sampled_df['l'].values))
+    ax.set_ylim(min(sampled_df['b'].values), max(sampled_df['b'].values))
+    ax.invert_xaxis()
+    
+    # Add legend
+    plt.legend(ncol=2, handles=legend_handles)
+    
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(f'{output_dir}/galactic_coordinates.jpg', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_bailey_diagram(df, class_column, output_dir='class_figures', min_prob=0.7, min_confidence=0.9, max_entropy=0.2):
+    """
+    Create a Bailey diagram showing period vs amplitude for variable stars, colored by class.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The dataframe containing the data
+    class_column : str
+        The column name containing class labels
+    output_dir : str, optional
+        Directory to save output figures, default='class_figures'
+    min_prob : float, optional
+        Minimum probability threshold, default=0.7
+    min_confidence : float, optional
+        Minimum confidence metric threshold, default=0.9
+    max_entropy : float, optional
+        Maximum entropy threshold, default=0.2
+    """
+    # Set up figure parameters
+    set_plot_style(large_text=True)
+    plt.rcParams['legend.fontsize'] = 15  # Specific legend size
+    
+    # Create a copy to avoid modifying the original
+    df = df.copy()
+    
+    # Apply filters
+    df = df[df['true_amplitude'] < 2]  # Filter extreme amplitudes
+    
+    # Add log period if not present
+    if 'log_true_period' not in df.columns:
+        df['log_true_period'] = np.log10(df['true_period'])
+    
+    df = df[df['log_true_period'] < 2.7]  # Filter period range
+    
+    # Apply confidence thresholds
+    prob_col = class_column.replace('predicted_class', 'confidence')
+    if prob_col in df.columns:
+        df = df[df[prob_col] > min_prob]
+    
+    # Additional confidence columns if they exist
+    if 'variable_confidence_metric' in df.columns:
+        df = df[df['variable_confidence_metric'] > min_confidence]
+    if 'variable_entropy' in df.columns:
+        df = df[df['variable_entropy'] < max_entropy]
+    
+    # Create bin edges for potential density plot
+    lon_edges = np.linspace(-1, 2.7, 100)
+    mag_edges = np.linspace(0, 2, 100)
+    
+    # Sample to avoid overcrowding
+    sampled_df = df.groupby(class_column).apply(
+        lambda x: x.nlargest(n=min(len(x), 10000), columns=prob_col)
+    ).reset_index(drop=True)
+    
+    # Create categorical encoding
+    sampled_df['type_code'] = pd.Categorical(sampled_df[class_column]).codes
+    
+    # Set up colors and markers
+    unique_types = sampled_df[class_column].unique()
+    colors = ['red', 'k', 'darkgreen', 'yellowgreen', 'plum', 'goldenrod', 'fuchsia', 'navy', 'turquoise', 'aqua', 'k']
+    markers = ['o', '^', 'X', '*', 's', 'P', '^', 'D', '<', '>']
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(15, 10))
+    
+    for i, var_type in enumerate(unique_types):
+        type_df = sampled_df[sampled_df[class_column] == var_type]
+        
+        # Customize appearance based on class
+        alpha = 0.7
+        s = 40
+        if i in [3, 4, 5]:
+            alpha = 1
+        if i == 3:
+            s = 100
+            
+        # Plot the data
+        plt.scatter(type_df['log_true_period'], type_df['true_amplitude'], 
+                   color=colors[i % len(colors)], 
+                   marker=markers[i % len(markers)], 
+                   label=var_type, s=s, alpha=alpha)
+    
+    # Add labels and legend
+    plt.legend(bbox_to_anchor=(0.1, 0.8), ncol=2)
+    ax.set_xlabel(r'log$_{10}$(Period) [days]')
+    ax.set_ylabel(r'Amplitude [mag]')
+    
+    # Set axis limits
+    ax.set_xlim(-1, 2.7)
+    ax.set_ylim(0, 2)
+    
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(f'{output_dir}/bailey_diagram.jpg', dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def plot_confidence_entropy(df, class_column, output_dir='class_figures', min_prob=0.7):
+    """
+    Create a scatter plot and heatmap showing relationship between confidence metric and entropy.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The dataframe containing the data
+    class_column : str
+        The column name containing class labels
+    output_dir : str, optional
+        Directory to save output figures, default='class_figures'
+    min_prob : float, optional
+        Minimum probability threshold, default=0.7
+    """
+    # Set up figure parameters
+    set_plot_style(large_text=True) 
+    plt.rcParams['legend.fontsize'] = 19
+    plt.rcParams['axes.labelsize'] = 25
+    plt.rcParams['lines.markersize'] = 15
+    
+    # Create a copy to avoid modifying the original
+    df = df.copy()
+    
+    # Apply filters based on probability
+    prob_col = class_column.replace('predicted_class', 'confidence')
+    if prob_col in df.columns:
+        df = df[df[prob_col] > min_prob]
+    
+    # Set up bin edges for visualization
+    lon_edges = np.linspace(0.4, 1, 100)
+    mag_edges = np.linspace(0, 1.3, 100)
+    
+    # Create figure with two subplots (vertical stacking)
+    fig = plt.figure(figsize=(15, 20))
+    
+    # Create scatter plot (top)
+    ax1 = fig.add_axes([0, 0.5, 1, 0.5])
+    
+    # Sample data to avoid overcrowding
+    sampled_df = df.groupby(class_column).apply(
+        lambda x: x.nlargest(n=min(len(x), 1000), columns=prob_col)
+    ).reset_index(drop=True)
+    
+    # Set up colors and markers
+    unique_types = sampled_df[class_column].unique()
+    colors = ['red', 'k', 'darkgreen', 'yellowgreen', 'plum', 'grey', 'goldenrod', 
+             'brown', 'fuchsia', 'navy', 'turquoise', 'aqua', 'k']
+    markers = ['o', '^', 'X', '*', 's', 'p', 'P', 'v', '^', 'D', '<', '>']
+    
+    # Check if the required confidence columns exist
+    if 'variable_confidence_metric' not in df.columns or 'variable_entropy' not in df.columns:
+        # Adapt to use available columns
+        x_col = prob_col  # Use probability as x
+        if len(df.columns) > 1:
+            # Try to find another numeric column for y
+            for col in df.columns:
+                if col != prob_col and pd.api.types.is_numeric_dtype(df[col]) and col != class_column:
+                    y_col = col
+                    break
+            else:
+                # If no suitable y column, create a random one for demonstration
+                df['uncertainty'] = 1 - df[prob_col]
+                y_col = 'uncertainty'
+        else:
+            # Create random entropy-like values
+            df['uncertainty'] = 1 - df[prob_col] + np.random.normal(0, 0.1, size=len(df))
+            df['uncertainty'] = np.clip(df['uncertainty'], 0, 1.3)
+            y_col = 'uncertainty'
+    else:
+        # Use the actual confidence columns
+        x_col = 'variable_confidence_metric'
+        y_col = 'variable_entropy'
+    
+    # Plot points
+    for i, var_type in enumerate(unique_types):
+        type_df = sampled_df[sampled_df[class_column] == var_type]
+        
+        # Customize appearance
+        alpha = 0.7
+        s = 80
+        if i in [3, 4, 5]:
+            alpha = 1
+        if i == 3:
+            s = 150
+            
+        # Plot data
+        ax1.scatter(
+            type_df[x_col] if x_col in type_df.columns else type_df[prob_col],
+            type_df[y_col] if y_col in type_df.columns else 1-type_df[prob_col],
+            color=colors[i % len(colors)], 
+            marker=markers[i % len(markers)], 
+            label=var_type, s=s, alpha=alpha
+        )
+    
+    # Add legend and labels
+    ax1.legend(ncol=2, loc='lower left')
+    ax1.set_ylabel(r'Entropy' if y_col == 'variable_entropy' else y_col)
+    
+    # Set axis limits
+    if x_col == 'variable_confidence_metric':
+        ax1.set_xlim([lon_edges[0], lon_edges[-1]])
+    else:
+        ax1.set_xlim([0.4, 1])
+        
+    # Remove x-axis labels from top plot
+    ax1.tick_params(labelbottom=False)
+    
+    # Create heatmap (bottom) 
+    ax2 = fig.add_axes([0, 0, 1, 0.5])
+    
+    # Create 2D histogram
+    H, xedges, yedges = np.histogram2d(
+        df[x_col] if x_col in df.columns else df[prob_col],
+        df[y_col] if y_col in df.columns else 1-df[prob_col],
+        bins=[lon_edges, mag_edges]
+    )
+    
+    # Plot heatmap
+    ax2.imshow(H.T, origin='lower', 
+              extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]], 
+              aspect='auto', cmap='inferno', norm=LogNorm())
+    
+    # Add labels
+    ax2.set_xlabel(r'Confidence metric' if x_col == 'variable_confidence_metric' else x_col)
+    ax2.set_ylabel(r'Entropy' if y_col == 'variable_entropy' else y_col)
+    
+    # Set axis limits for bottom plot
+    if x_col == 'variable_confidence_metric':
+        ax2.set_xlim([lon_edges[0], lon_edges[-1]])
+    else:
+        ax2.set_xlim([0.4, 1])
+        
+    # Ensure bottom plot has x-axis labels
+    ax2.tick_params(top=False, labeltop=False)
+    
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(f'{output_dir}/classification_confidence.jpg', dpi=300, bbox_inches='tight')
+    plt.close()
+
