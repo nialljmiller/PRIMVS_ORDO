@@ -95,10 +95,75 @@ def select_features(train_df, test_df):
 
     return available_features
 
-
+# === Model Training and Prediction ===
 def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
-    # [First part of function remains unchanged...]
-    
+    # Prepare data
+    X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
+
+    # Encode labels
+    label_encoder = LabelEncoder()
+    y_train_encoded = label_encoder.fit_transform(train_df[label_col])
+
+    X_test = test_df[features].replace([np.inf, -np.inf], np.nan)
+
+    # Create DMatrix - optimized data structure for XGBoost
+    print("Converting data to DMatrix format...")
+    dtrain = xgb.DMatrix(X_train, label=y_train_encoded)
+    dtest = xgb.DMatrix(X_test)
+
+    # Calculate class weights for imbalanced data
+    class_counts = np.bincount(y_train_encoded)
+    total_samples = len(y_train_encoded)
+    class_weights = total_samples / (len(class_counts) * class_counts)
+
+    # Parameters optimized for astronomical classification with GPU
+    params = {
+        'objective': 'multi:softprob',
+        'num_class': len(label_encoder.classes_),
+        'eval_metric': 'mlogloss',
+        'learning_rate': 0.05,
+        'max_depth': 12,
+        'min_child_weight': 30,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'tree_method': 'gpu_hist',       # Use GPU for training
+        'predictor': 'gpu_predictor',    # Use GPU for prediction
+        'gpu_id': 0,                     # Specify which GPU to use
+        'max_bin': 256                   # Optimization for GPU
+    }
+
+    # Print class distribution and weights
+    print("\nClass distribution:")
+    for i, cls in enumerate(label_encoder.classes_):
+        count = class_counts[i]
+        weight = class_weights[i]
+        print(f"  {cls}: {count} samples, weight: {weight:.3f}")
+
+    # Train the model
+    print(f"\nTraining XGBoost model on GPU with {len(features)} features...")
+    model = xgb.train(
+        params,
+        dtrain,
+        num_boost_round=500,      # Increase for better performance if time permits
+        evals=[(dtrain, 'train')],
+        verbose_eval=50,          # Print evaluation every 50 rounds
+    )
+
+    # Run inference on GPU
+    print(f"Running inference on {len(X_test)} samples...")
+    probs = model.predict(dtest)
+    preds = np.argmax(probs, axis=1)
+    confs = np.max(probs, axis=1)
+
+    # Convert predictions back to original labels
+    pred_labels = label_encoder.inverse_transform(preds)
+
+    # Add predictions to test DataFrame
+    test_df_result = test_df.copy()
+    test_df_result["xgb_predicted_class_id"] = preds
+    test_df_result["xgb_predicted_class"] = pred_labels
+    test_df_result["xgb_confidence"] = confs
+
     # Save results
     test_df_result.to_csv(output_file, index=False)
     print(f"\nSaved predictions to {output_file}")
@@ -167,9 +232,7 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
         print(f"\nGround truth column '{label_col}' not found in test data.")
         print("Skipping evaluation metrics that require ground truth.")
 
-    return model, label_encoder, probs
-
-
+    return model, label_encoder, probs    
 
 # === Main Function ===
 def main():
