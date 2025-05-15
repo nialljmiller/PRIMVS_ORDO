@@ -41,11 +41,7 @@ def load_data(filepath):
 
 def prepare_data(df, features, scale_method='robust'):
     """
-    Prepare data for PCA:
-    1. Filter to only the selected features
-    2. Handle missing values
-    3. Scale features
-    4. Transform Period to log scale
+    Prepare data for PCA with advanced feature-specific preprocessing
     """
     # Filter to only requested features
     available_features = [f for f in features if f in df.columns]
@@ -57,37 +53,118 @@ def prepare_data(df, features, scale_method='robust'):
     # Handle missing values and infinities
     df_selected.replace([np.inf, -np.inf], np.nan, inplace=True)
     
-    # Impute missing values with KNN
+    # First, impute missing values with KNN
     imputer = KNNImputer(n_neighbors=5)
     df_imputed = pd.DataFrame(
         imputer.fit_transform(df_selected),
         columns=df_selected.columns
     )
     
-    # Scale features
+    # Create a DataFrame to store transformed data
+    df_transformed = df_imputed.copy()
+    
+    # Apply feature-specific transformations based on data characteristics
+    for feature in df_transformed.columns:
+        data = df_transformed[feature].values
+        
+        # Skip embedding features (dimensions from contrastive learning)
+        if feature.isdigit():
+            continue
+            
+        # Calculate skewness
+        skewness = pd.Series(data).skew()
+        
+        # Check for large range (max/min ratio)
+        feature_range = np.nanmax(data) / (np.nanmin(data) + 1e-10)  # Avoid division by zero
+        
+        # Identify transformation method
+        if feature == 'true_period':
+            # Log transform for period (astronomical convention)
+            min_positive = max(np.nanmin(data[data > 0]), 1e-10)
+            data[data <= 0] = min_positive / 10
+            data = np.log10(data)
+            print(f"Applied log10 transform to {feature} (astronomical convention)")
+            
+        elif feature == 'true_amplitude':
+            # Log transform for amplitude (astronomical convention)
+            min_positive = max(np.nanmin(data[data > 0]), 1e-10)
+            data[data <= 0] = min_positive / 10
+            data = np.log10(data)
+            print(f"Applied log10 transform to {feature} (astronomical convention)")
+            
+        elif feature == 'best_fap':
+            # FAP is already between 0-1, but log transform can help highlight differences
+            # Add small constant to avoid log(0)
+            min_positive = max(np.nanmin(data[data > 0]), 1e-10)
+            data[data <= 0] = min_positive / 10
+            data = -np.log10(data)  # Negative log transform makes smaller FAP values larger (better)
+            print(f"Applied -log10 transform to {feature} (higher values = better significance)")
+            
+        elif abs(skewness) > 2:
+            # Highly skewed - use log transform
+            # Check if all values are positive
+            if np.nanmin(data) <= 0:
+                # Add offset to make all values positive
+                offset = abs(np.nanmin(data)) + 1e-10
+                data = np.log1p(data + offset)
+                print(f"Applied log1p transform with offset to {feature} (skewness: {skewness:.2f})")
+            else:
+                data = np.log1p(data)
+                print(f"Applied log1p transform to {feature} (skewness: {skewness:.2f})")
+                
+        elif abs(skewness) > 1:
+            # Moderately skewed - use square root or cube root
+            if np.nanmin(data) < 0:
+                # Use cube root for negative values
+                data = np.cbrt(data)
+                print(f"Applied cube root transform to {feature} (skewness: {skewness:.2f})")
+            else:
+                # Use square root for positive values
+                data = np.sqrt(np.abs(data)) * np.sign(data)
+                print(f"Applied square root transform to {feature} (skewness: {skewness:.2f})")
+                
+        elif feature_range > 1000:
+            # Very large range - use log transform
+            if np.nanmin(data) <= 0:
+                offset = abs(np.nanmin(data)) + 1e-10
+                data = np.log1p(data + offset)
+                print(f"Applied log1p transform to {feature} (large range: {feature_range:.1e})")
+            else:
+                data = np.log1p(data)
+                print(f"Applied log1p transform to {feature} (large range: {feature_range:.1e})")
+        
+        # Update the transformed DataFrame
+        df_transformed[feature] = data
+    
+    # Now apply final scaling
     if scale_method == 'robust':
-        scaler = RobustScaler()
+        scaler = RobustScaler(quantile_range=(5, 95))  # Use 5-95 percentile range to be more robust
+        print("Using robust scaling with 5-95 percentile range")
     else:
         scaler = StandardScaler()
+        print("Using standard scaling (z-score normalization)")
     
+    # Apply scaling to all features
     df_scaled = pd.DataFrame(
-        scaler.fit_transform(df_imputed),
-        columns=df_imputed.columns
+        scaler.fit_transform(df_transformed),
+        columns=df_transformed.columns
     )
     
-    # Transform period to log scale if present
-    if 'true_period' in df_scaled.columns:
-        # Add a small constant to avoid log(0)
-        min_positive = df_imputed['true_period'][df_imputed['true_period'] > 0].min()
-        period_data = df_imputed['true_period'].values
-        period_data[period_data <= 0] = min_positive / 10
-        
-        # Apply log transform and scale
-        period_col = df_scaled.columns.get_loc('true_period')
-        df_scaled.iloc[:, period_col] = scaler.fit_transform(
-            np.log10(period_data).reshape(-1, 1)
-        )
+    # Remove any remaining infinities or NaNs (shouldn't be any, but just in case)
+    df_scaled.replace([np.inf, -np.inf], np.nan, inplace=True)
     
+    # If any NaNs remain, fill with 0 (mean of scaled data)
+    df_scaled.fillna(0, inplace=True)
+    
+    # Check for any remaining issues
+    if df_scaled.isna().any().any():
+        print("Warning: NaN values remain after preprocessing")
+    
+    # Check for extreme values that might dominate PCA
+    max_abs = df_scaled.abs().max().max()
+    if max_abs > 100:
+        print(f"Warning: Extreme values detected (max absolute value: {max_abs:.1f})")
+        
     return df_scaled
 
 def apply_pca(data, n_components=2):

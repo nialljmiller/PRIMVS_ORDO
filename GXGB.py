@@ -187,31 +187,29 @@ def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
     plot_xgb_feature_importance(feature_names, importance_values, top_n=20)
     print("Saved feature importance visualization to xgb_feature_importance.png")
 
-    # These visualizations don't need ground truth, just predictions
-    try:
-        # Plot confidence distribution
-        plot_confidence_distribution(confs, preds, class_names)
-        print("Saved confidence distribution plot to confidence_distribution.png")
-        
-        # Feature plots
-        plot_period_amplitude(test_df_result, "xgb_predicted_class")
-        plot_galactic_distribution(test_df_result, "xgb_predicted_class")
-        plot_color_color(test_df_result, "xgb_predicted_class")
-        plot_astronomical_map(test_df_result, "xgb_predicted_class")
-        
-        # These might need additional columns that may not exist
-        plot_hr_diagram(test_df_result, "xgb_predicted_class")
-        
-        # Plot feature distributions by class
-        selected_features = features[:12] if len(features) > 12 else features
-        plot_feature_class_correlations(test_df_result, selected_features, "xgb_predicted_class")
-        print("Saved feature class distributions to feature_class_distributions.png")
-        
-        # These might need additional arguments to work correctly
-        plot_xgb_class_probability_heatmap(probs, class_names)
-        plot_xgb_top2_confidence_scatter(probs, preds, class_names)
-    except Exception as e:
-        print(f"Error in visualization: {e}")
+
+    # Plot confidence distribution
+    plot_confidence_distribution(confs, preds, class_names)
+    print("Saved confidence distribution plot to confidence_distribution.png")
+    
+    # Feature plots
+    plot_period_amplitude(test_df_result, "xgb_predicted_class")
+    plot_galactic_distribution(test_df_result, "xgb_predicted_class")
+    plot_color_color(test_df_result, "xgb_predicted_class")
+    plot_astronomical_map(test_df_result, "xgb_predicted_class")
+    
+    # These might need additional columns that may not exist
+    plot_hr_diagram(test_df_result, "xgb_predicted_class")
+    
+    # Plot feature distributions by class
+    selected_features = features[:12] if len(features) > 12 else features
+    plot_feature_class_correlations(test_df_result, selected_features, "xgb_predicted_class")
+    print("Saved feature class distributions to feature_class_distributions.png")
+    
+    # These might need additional arguments to work correctly
+    plot_xgb_class_probability_heatmap(probs, class_names)
+    plot_xgb_top2_confidence_scatter(probs, preds, class_names)
+
 
     # Evaluate if ground truth is available
     if label_col in test_df_result.columns:
