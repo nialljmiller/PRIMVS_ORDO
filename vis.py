@@ -7,6 +7,7 @@ import torch
 import os
 import torch.nn.functional as F
 from torch.nn import Linear
+import os
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
 from sklearn.preprocessing import StandardScaler, LabelEncoder
