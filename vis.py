@@ -18,11 +18,11 @@ from matplotlib.colors import Normalize, LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.ndimage import zoom, gaussian_filter
 import pandas as pd
+import os
 
 
 
-
-def plot_xgb_training_loss(evals_result, save_path='class_figures/training_loss.png'):
+def plot_xgb_training_loss(evals_result, save_path='figures/training_loss.png'):
     """Simple function to plot XGBoost training and validation loss"""
     import matplotlib.pyplot as plt
     
