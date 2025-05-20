@@ -31,6 +31,23 @@ def get_feature_list(train, test):
     print(f"Using {len(usable)} of {len(full_set)} total features")
     return usable
 
+
+# Add this at the top of your file with other imports
+def get_gpu_count():
+    try:
+        import subprocess
+        result = subprocess.run(['nvidia-smi', '-L'], stdout=subprocess.PIPE)
+        return len(result.stdout.decode('utf-8').strip().split('\n'))
+    except:
+        try:
+            # Alternative method using pycuda
+            import pycuda.driver as cuda
+            cuda.init()
+            return cuda.Device.count()
+        except:
+            return 1  # Default to 1 if detection fails
+
+
 def train_xgb(train_df, test_df, features, label_col, out_file):
     # Preprocess
     X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
@@ -43,20 +60,33 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
     # Handle class imbalance
     weights = len(y) / (np.bincount(y) * len(np.bincount(y)))
 
+
+
+    # In your train_xgb function, replace the params block with this:
+    num_gpus = get_gpu_count()
+    print(f"Auto-detected {num_gpus} GPUs")
+
     params = {
         'objective': 'multi:softprob',
         'num_class': len(np.unique(y)),
         'eval_metric': 'mlogloss',
-        'learning_rate': 0.05,
-        'max_depth': 12,
+        'learning_rate': 0.01,  # Lower learning rate for higher rounds
+        'max_depth': 15,        # Increased from 12
         'min_child_weight': 30,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'tree_method': 'gpu_hist',
         'predictor': 'gpu_predictor',
-        'gpu_id': 0,
-        'max_bin': 512
+        'max_bin': 1024         # Higher precision binning
     }
+    
+    # Auto-configure GPU usage
+    if num_gpus > 1:
+        params['n_gpus'] = num_gpus
+    else:
+        params['gpu_id'] = 0    # Use gpu_id only when single GPU
+
+
 
     print("Training...")
     model = xgb.train(params, dtrain, num_boost_round=2000, evals=[(dtrain, 'train')], verbose_eval=50)
