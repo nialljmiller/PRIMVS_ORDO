@@ -182,7 +182,8 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
     test_df_result['xgb_confidence'] = confs
     test_df_result.to_csv(out_file, index=False)
     print(f"Saved predictions to {out_file}")
-    
+    test_df = test_df_result.copy()
+
     # Feature importance analysis
     importance = model.get_score(importance_type='gain')
     top_feats = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:20]
