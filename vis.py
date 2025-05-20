@@ -22,6 +22,176 @@ import os
 
 
 
+
+# Add new GNN-specific visualization functions
+def plot_gnn_training_loss(losses, save_path='figures/gnn_training_loss.png'):
+    """Plot GNN training loss over epochs"""
+    plt.figure(figsize=(10, 6))
+    plt.plot(losses, linewidth=2)
+    plt.xlabel('Epoch', fontsize=14)
+    plt.ylabel('Loss', fontsize=14)
+    plt.title('GNN Training Loss', fontsize=16)
+    plt.grid(True, alpha=0.3)
+    
+    # Mark best model
+    min_loss_idx = np.argmin(losses)
+    min_loss = losses[min_loss_idx]
+    plt.scatter(min_loss_idx, min_loss, color='red', s=100)
+    plt.annotate(f'Best: {min_loss:.4f} (epoch {min_loss_idx})', 
+                xy=(min_loss_idx, min_loss),
+                xytext=(min_loss_idx + len(losses)*0.05, min_loss),
+                arrowprops=dict(arrowstyle='->'))
+    
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    return plt
+
+def plot_gnn_embeddings(embeddings, labels, class_names, save_path='figures/gnn_embeddings.png'):
+    """Visualize GNN embeddings using t-SNE"""
+    tsne = TSNE(n_components=2, random_state=42)
+    embedded = tsne.fit_transform(embeddings)
+    
+    plt.figure(figsize=(12, 10))
+    for i, class_name in enumerate(class_names):
+        mask = labels == i
+        if np.any(mask):
+            plt.scatter(embedded[mask, 0], embedded[mask, 1], label=class_name, alpha=0.6, s=30)
+    
+    plt.legend(fontsize=12)
+    plt.title('t-SNE Visualization of GNN Embeddings', fontsize=16)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    return plt
+
+def plot_gnn_edge_distribution(edge_index, n_nodes, save_path='figures/gnn_edge_distribution.png'):
+    """Visualize the distribution of edges in the graph"""
+    src, dst = edge_index
+    degrees = np.bincount(src.cpu().numpy())
+    
+    plt.figure(figsize=(10, 6))
+    plt.hist(degrees, bins=30, alpha=0.7, color='steelblue')
+    plt.xlabel('Node Degree', fontsize=14)
+    plt.ylabel('Frequency', fontsize=14)
+    plt.title('Distribution of Node Connections in GNN', fontsize=16)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    return plt
+
+def plot_gnn_feature_importance(model, feature_names, save_path='figures/gnn_feature_importance.png'):
+    """Visualize feature importance in GNN based on first layer weights"""
+    # Extract weights from the first GCN layer
+    weights = model.conv1.lin.weight.cpu().detach().numpy()
+    importance = np.abs(weights).mean(axis=0)
+    
+    # Sort features by importance
+    indices = np.argsort(importance)[::-1]
+    top_indices = indices[:20]  # Top 20 features
+    
+    plt.figure(figsize=(12, 8))
+    plt.barh([feature_names[i] for i in top_indices], importance[top_indices], color='steelblue')
+    plt.xlabel('Mean Absolute Weight', fontsize=14)
+    plt.title('Top 20 Important Features in GNN', fontsize=16)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    return plt
+
+def plot_gnn_confusion_matrix(y_true, y_pred, class_names, save_path='figures/gnn_confusion_matrix.png'):
+    """Plot GNN confusion matrix with custom styling"""
+    cm = confusion_matrix(y_true, y_pred)
+    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm_norm, annot=True, fmt='.2f', cmap='Blues', 
+                xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel('Predicted Label', fontsize=14)
+    plt.ylabel('True Label', fontsize=14)
+    plt.title('GNN Classification Results', fontsize=16)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    return plt
+
+# Visualization dashboard - combines multiple plots
+def create_gnn_dashboard(results_df, label_col, features, model, labels, probs, 
+                         class_names, embeddings=None, losses=None, edge_index=None):
+    """Create a comprehensive dashboard of GNN results"""
+    # Create figures directory
+    os.makedirs('figures', exist_ok=True)
+    
+    # Classification metrics
+    if label_col in results_df.columns:
+        y_true = results_df[label_col]
+        y_pred = results_df['gnn_predicted_class']
+        plot_gnn_confusion_matrix(y_true, y_pred, class_names)
+        plot_classification_performance(y_true, y_pred, class_names)
+        try:
+            plot_misclassification_analysis(
+                labels if isinstance(y_true[0], int) else 
+                LabelEncoder().fit_transform(y_true), 
+                labels, probs, class_names
+            )
+        except Exception as e:
+            print(f"Error in misclassification analysis: {e}")
+    
+    # Astronomical visualizations
+    plot_period_amplitude(results_df, "gnn_predicted_class")
+    plot_galactic_distribution(results_df, "gnn_predicted_class")
+    plot_color_color(results_df, "gnn_predicted_class")
+    plot_hr_diagram(results_df, "gnn_predicted_class")
+    
+    # Model-specific visualizations
+    if losses is not None:
+        plot_gnn_training_loss(losses)
+    
+    if edge_index is not None and isinstance(edge_index, torch.Tensor):
+        plot_gnn_edge_distribution(edge_index, len(results_df))
+    
+    if model is not None and len(features) > 0:
+        try:
+            plot_gnn_feature_importance(model, features)
+        except Exception as e:
+            print(f"Error in feature importance plot: {e}")
+    
+    if embeddings is not None:
+        try:
+            plot_gnn_embeddings(embeddings, labels, class_names)
+        except Exception as e:
+            print(f"Error in embedding visualization: {e}")
+    
+    # Confidence distribution
+    confs = np.max(probs, axis=1) if probs is not None else results_df['gnn_confidence'].values
+    plot_confidence_distribution(confs, labels, class_names)
+    
+    print("Visualization dashboard created in 'figures' directory")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def plot_xgb_training_loss(evals_result, save_path='figures/training_loss.png'):
     """Simple function to plot XGBoost training and validation loss"""
     import matplotlib.pyplot as plt
@@ -971,7 +1141,7 @@ def plot_galactic_coords(df, class_column, output_dir='class_figures', min_prob=
     
     # Save figure
     os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f'{output_dir}/galactic_coordinates.jpg', dpi=300, bbox_inches='tight')
+    plt.savefig('figures/galactic_coordinates.jpg', dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -1211,7 +1381,7 @@ def plot_confidence_entropy(df, class_column, output_dir='class_figures', min_pr
     
     # Save figure
     os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f'{output_dir}/classification_confidence.jpg', dpi=300, bbox_inches='tight')
+    plt.savefig('figures/classification_confidence.jpg', dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -1229,49 +1399,49 @@ def visualize_pca(pca_df, original_df, pca_model, output_dir='./figures'):
     plt.ylabel(f"PC2 ({pca_model.explained_variance_ratio_[1]:.2%})")
     plt.title("PCA: PC1 vs PC2")
     plt.grid(); plt.tight_layout()
-    plt.savefig(f"{output_dir}/pca_scatter.png"); plt.close()
+    plt.savefig("figures/pca_scatter.png"); plt.close()
 
     # Density
     plt.figure(); sns.kdeplot(x=pca_df['PC1'], y=pca_df['PC2'], cmap="Blues", fill=True)
     plt.xlabel("PC1"); plt.ylabel("PC2"); plt.title("PCA Density"); plt.grid()
-    plt.tight_layout(); plt.savefig(f"{output_dir}/pca_density.png"); plt.close()
+    plt.tight_layout(); plt.savefig("figures/pca_density.png"); plt.close()
 
     # 2D Hist
     plt.figure(); h = plt.hist2d(pca_df['PC1'], pca_df['PC2'], bins=100, cmap='viridis', norm=LogNorm())
     plt.colorbar(h[3]); plt.xlabel("PC1"); plt.ylabel("PC2")
     plt.title("PCA Histogram"); plt.tight_layout()
-    plt.savefig(f"{output_dir}/pca_histogram.png"); plt.close()
+    plt.savefig("figures/pca_histogram.png"); plt.close()
 
     # Scree
     plt.figure()
     plt.bar(range(1, len(pca_model.explained_variance_ratio_)+1), pca_model.explained_variance_ratio_)
     plt.step(range(1, len(pca_model.explained_variance_ratio_)+1), np.cumsum(pca_model.explained_variance_ratio_), label='Cumulative')
     plt.xlabel('PC'); plt.ylabel('Explained Variance'); plt.legend()
-    plt.tight_layout(); plt.savefig(f"{output_dir}/pca_scree.png"); plt.close()
+    plt.tight_layout(); plt.savefig("figures/pca_scree.png"); plt.close()
 
     # Loadings
     load = pd.DataFrame(pca_model.components_.T, index=pca_model.feature_names_in_, columns=[f'PC{i+1}' for i in range(pca_model.n_components_)])
     top = pd.concat([load['PC1'].abs().sort_values(ascending=False), load['PC2'].abs().sort_values(ascending=False)]).index.unique()[:15]
     plt.figure(figsize=(10, 6)); sns.heatmap(load.loc[top, ['PC1', 'PC2']], annot=True, cmap='coolwarm', center=0)
     plt.title("Top Feature Loadings"); plt.tight_layout()
-    plt.savefig(f"{output_dir}/pca_loadings.png"); plt.close()
+    plt.savefig("figures/pca_loadings.png"); plt.close()
 
     # Coloured scatter: FAP, period, amplitude
     if 'best_fap' in original_df.columns:
         plt.figure()
         plt.scatter(pca_df['PC1'], pca_df['PC2'], c=original_df['best_fap'], cmap='viridis_r', s=10, alpha=0.7)
         plt.colorbar(label='FAP'); plt.tight_layout()
-        plt.savefig(f"{output_dir}/pca_fap.png"); plt.close()
+        plt.savefig("figures/pca_fap.png"); plt.close()
 
     if 'true_period' in original_df.columns:
         plt.figure()
         plt.scatter(pca_df['PC1'], pca_df['PC2'], c=np.log10(np.clip(original_df['true_period'].values, 0.01, None)), cmap='plasma', s=10, alpha=0.7)
         plt.colorbar(label='log10(Period)'); plt.tight_layout()
-        plt.savefig(f"{output_dir}/pca_period.png"); plt.close()
+        plt.savefig("figures/pca_period.png"); plt.close()
 
     if 'true_amplitude' in original_df.columns:
         plt.figure()
         plt.scatter(pca_df['PC1'], pca_df['PC2'], c=np.log10(np.clip(original_df['true_amplitude'].values, 0.001, None)), cmap='inferno', s=10, alpha=0.7)
         plt.colorbar(label='log10(Amplitude)'); plt.tight_layout()
-        plt.savefig(f"{output_dir}/pca_amplitude.png"); plt.close()
+        plt.savefig("figures/pca_amplitude.png"); plt.close()
 

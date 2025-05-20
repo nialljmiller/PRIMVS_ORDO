@@ -7,92 +7,83 @@ import torch.nn.functional as F
 from torch.nn import Linear
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split
 from astropy.io import fits
-from sklearn.metrics import classification_report, confusion_matrix
-import faiss  # Add FAISS for fast KNN
-from vis import *
+from sklearn.metrics import classification_report
+import faiss
+import subprocess
 
-# === Configuration ===
-class Config:
-    # Feature definitions
-    BASE_FEATURES = [
-        "MAD", "eta", "true_amplitude", "mean_var", "std_nxs", "range_cum_sum", "max_slope",
-        "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD", "true_period",
-        "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag", "z_med_mag-ks_med_mag",
-        "parallax", "pmra", "pmdec", "chisq", "uwe"
-    ]
-    
-    # Embedding features (numbered dimensions from contrastive learning)
-    EMBEDDING_FEATURES = [str(i) for i in range(128)]
-    
-    # All features to use
-    FEATURE_COLUMNS = EMBEDDING_FEATURES + BASE_FEATURES
-    
-    # Model parameters
-    K_NEIGHBORS = 8
-    MAX_CLASSES = 15
-    BATCH_SIZE = 4096
-    USE_CPU = False
-    LABEL_COLUMN = "best_class_name"
-    EPOCHS = 150
+# Import visualization functions
+from vis import (create_gnn_dashboard, plot_gnn_training_loss, 
+                plot_gnn_embeddings, plot_gnn_feature_importance)
 
-# === Data Loading Functions ===
-def load_fits_to_dataframe(fits_path):
-    """Load a FITS file into a pandas DataFrame"""
-    print(f"Loading data from {fits_path}...")
-    with fits.open(fits_path) as hdul:
-        data = hdul[1].data
+#########################################
+# UTILITY FUNCTIONS
+#########################################
+
+def get_gpu_count():
+    """Auto-detect available GPUs"""
+    try:
+        result = subprocess.run(['nvidia-smi', '-L'], stdout=subprocess.PIPE)
+        return len(result.stdout.decode('utf-8').strip().split('\n'))
+    except:
+        return 0
+
+def load_fits_to_df(path):
+    """Load FITS file to DataFrame with error handling"""
+    print(f"Loading {path}...")
+    with fits.open(path) as hdul:
         try:
-            return pd.DataFrame(data)
-        except Exception as e:
-            print(f"Direct conversion failed: {e}")
-            try:
-                return pd.DataFrame.from_records(data)
-            except Exception as e:
-                print(f"Structured array approach failed: {e}")
-                columns = data.names
-                df = pd.DataFrame()
-                for col in columns:
-                    df[col] = data[col]
-                return df
+            return pd.DataFrame(hdul[1].data)
+        except:
+            # Handle structured arrays
+            data = hdul[1].data
+            columns = data.names
+            df = pd.DataFrame()
+            for col in columns:
+                df[col] = data[col]
+            return df
 
-# === Data Preprocessing Functions ===
-def preprocess_data(train_df, test_df, feature_cols, label_col):
-    """Preprocess data for model training"""
-    # Identify common features
-    train_features = set(train_df.columns)
-    test_features = set(test_df.columns)
-    common_features = list(train_features.intersection(test_features))
-    available_features = [f for f in feature_cols if f in common_features]
+def get_feature_list(train, test):
+    """Get common features between training and test data"""
+    # Basic feature sets for variable star classification
+    variability = ["MAD", "eta", "eta_e", "true_amplitude", "mean_var", "std_nxs", 
+                 "range_cum_sum", "max_slope", "percent_amp", "stet_k", "roms", 
+                 "lag_auto", "Cody_M", "AD"]
+    colour = ["z_med_mag-ks_med_mag", "y_med_mag-ks_med_mag", "j_med_mag-ks_med_mag", 
+            "h_med_mag-ks_med_mag"]
+    mags = ["ks_med_mag", "ks_std_mag", "ks_mad_mag"]
+    period = ["true_period"]
+    quality = ["chisq", "uwe"]
+    coords = ["l", "b", "parallax", "pmra", "pmdec"]
+    faps = ["ls_fap", "pdm_fap", "ce_fap", "gp_fap"]
     
-    print(f"Found {len(available_features)} common features across both datasets")
-    if len(available_features) < 10:
-        print("WARNING: Very few features available. Identifying alternative features...")
-        potential_embeddings = [col for col in common_features if (
-            col.startswith('z') or col.startswith('h') or col.startswith('u')
-        ) and (
-            'pca' in col.lower() or 'tsne' in col.lower() or 'umap' in col.lower()
-        )]
-        
-        if potential_embeddings:
-            print(f"Found {len(potential_embeddings)} potential embedding features")
-            available_features += [col for col in potential_embeddings if col not in available_features]
+    # Add contrastive learning embeddings (128 dimensions)
+    embeddings = [str(i) for i in range(128)]
     
-    print(f"Using {len(available_features)} features for model training")
+    full_set = variability + colour + mags + period + quality + coords + faps + embeddings
+    common = set(train.columns).intersection(test.columns)
+    usable = [f for f in full_set if f in common]
+    print(f"Using {len(usable)} of {len(full_set)} total features")
+    return usable
+
+#########################################
+# DATA PREPARATION
+#########################################
+
+def preprocess_data(train_df, test_df, features, label_col):
+    """Process data for GNN training"""
+    print("Preprocessing data...")
     
-    # Process feature matrices
-    X_train = train_df[available_features].copy()
-    X_train.replace([np.inf, -np.inf], np.nan, inplace=True)
-    print(f"NaN values in training data: {X_train.isna().sum().sum()}")
+    # Handle missing values and infinities
+    X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
+    X_test = test_df[features].replace([np.inf, -np.inf], np.nan)
     
-    X_test = test_df[available_features].copy()
-    X_test.replace([np.inf, -np.inf], np.nan, inplace=True)
-    print(f"NaN values in testing data: {X_test.isna().sum().sum()}")
-    
-    # Compute statistics from training data only
-    train_min = X_train.quantile(0.001)
-    train_max = X_train.quantile(0.999)
+    # Get statistics from training data
+    train_quantiles = X_train.quantile([0.001, 0.999])
+    train_min = train_quantiles.iloc[0]
+    train_max = train_quantiles.iloc[1]
     train_mean = X_train.mean()
     
     # Apply clipping and imputation
@@ -102,7 +93,7 @@ def preprocess_data(train_df, test_df, feature_cols, label_col):
     X_test = X_test.clip(lower=train_min, upper=train_max, axis=1)
     X_test.fillna(train_mean, inplace=True)
     
-    # Standardize
+    # Standardize data
     X_combined = pd.concat([X_train, X_test], ignore_index=True)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_combined)
@@ -121,25 +112,26 @@ def preprocess_data(train_df, test_df, feature_cols, label_col):
     num_classes = len(label_encoder.classes_)
     
     print(f"Using {num_classes} classes for training")
-    print("Class mapping:")
+    print("Class distribution:")
     for i, cls in enumerate(label_encoder.classes_):
-        print(f"  {i}: {cls}")
+        count = (y_train == i).sum().item()
+        print(f"  {i}: {cls} - {count} samples")
     
-    return x_train, x_test, y_train, label_encoder, available_features
+    return x_train, x_test, y_train, label_encoder, train_df, test_df
 
-# === Graph Construction ===
-def build_knn_graph_faiss(data, k, use_gpu=True):
-    """Fast KNN graph construction using FAISS"""
-    if isinstance(data, torch.Tensor):
-        data_np = data.cpu().numpy().astype('float32')
+def build_knn_graph(features, k=8, use_gpu=True):
+    """Build KNN graph for GNN using FAISS"""
+    if isinstance(features, torch.Tensor):
+        data_np = features.cpu().numpy().astype('float32')
     else:
-        data_np = data.astype('float32')
+        data_np = features.astype('float32')
     
     n, d = data_np.shape
     print(f"Building KNN graph for {n} points with dimension {d}")
     
     # Initialize FAISS index with GPU if available
-    if use_gpu and faiss.get_num_gpus() > 0:
+    gpu_available = use_gpu and faiss.get_num_gpus() > 0
+    if gpu_available:
         print(f"Using GPU for FAISS (found {faiss.get_num_gpus()} GPUs)")
         res = faiss.StandardGpuResources()
         index = faiss.GpuIndexFlatL2(res, d)
@@ -147,13 +139,11 @@ def build_knn_graph_faiss(data, k, use_gpu=True):
         print("Using CPU for FAISS")
         index = faiss.IndexFlatL2(d)
     
-    # For very large datasets, process in batches
-    batch_size = 500000  # Adjust based on GPU memory
-    
-    # Add all data to the index (this is fast)
+    # Add data to index
     index.add(data_np)
     
-    # Process queries in batches (this is the slow part)
+    # Process in batches
+    batch_size = 500000
     all_rows = []
     all_cols = []
     
@@ -175,17 +165,20 @@ def build_knn_graph_faiss(data, k, use_gpu=True):
     
     # Create edge_index tensor
     edge_index = torch.tensor(np.vstack([rows, cols]), dtype=torch.long)
-    
     print(f"Created KNN graph with {edge_index.shape[1]} edges")
     return edge_index
 
-# === Model Definition ===
+#########################################
+# MODEL DEFINITION
+#########################################
+
 class GCN(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels):
+    """Graph Convolutional Network for star classification"""
+    def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.3):
         super().__init__()
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, out_channels)
-        self.dropout = torch.nn.Dropout(0.3)
+        self.dropout = torch.nn.Dropout(dropout)
 
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
@@ -195,172 +188,249 @@ class GCN(torch.nn.Module):
         return x
 
     def get_embeddings(self, x, edge_index):
-        return self.conv1(x, edge_index).detach()
+        """Extract embeddings from penultimate layer"""
+        with torch.no_grad():
+            return self.conv1(x, edge_index).detach()
 
-# === Training Function ===
-def train_model(model, data, y_train, num_classes, device, config):
+#########################################
+# TRAINING FUNCTIONS
+#########################################
+
+def train_model(model, data, y_train, num_classes, device, batch_size=4096, epochs=150):
     """Train the GNN model"""
-    print(f"Training model with {num_classes} classes...")
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+    print("\nTraining model...")
     
     # Compute class weights for imbalanced classes
-    class_counts = np.bincount(y_train.cpu().numpy())
-    class_weights = 1.0 / (class_counts + 1e-10)
-    class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
+    class_counts = torch.bincount(y_train)
+    class_weights = 1.0 / (class_counts.float() + 1e-6)
+    class_weights = class_weights / class_weights.sum() * len(class_weights)
+    class_weights = class_weights.to(device)
     
-    # Batched training
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-5
+    )
+    
+    # Training loop with batching
     model.train()
-    for epoch in range(config.EPOCHS):
-        total_loss = 0
-        # Shuffle indices for better training
+    best_loss = float('inf')
+    patience_counter = 0
+    patience = 20  # Early stopping patience
+    losses = []
+    best_model = None
+    
+    for epoch in range(epochs):
+        epoch_loss = 0
+        
+        # Shuffle indices
         train_indices = torch.randperm(len(y_train))
-        num_batches = (len(train_indices) + config.BATCH_SIZE - 1) // config.BATCH_SIZE
+        num_batches = (len(train_indices) + batch_size - 1) // batch_size
         
         for i in range(num_batches):
-            batch_indices = train_indices[i*config.BATCH_SIZE:(i+1)*config.BATCH_SIZE]
+            batch_indices = train_indices[i*batch_size:(i+1)*batch_size]
             optimizer.zero_grad()
+            
+            # Forward pass
             out = model(data.x, data.edge_index)
             loss = F.cross_entropy(out[batch_indices], data.y[batch_indices], weight=class_weights)
+            
+            # Backward pass
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+            epoch_loss += loss.item()
         
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch:03d}, Avg Loss: {total_loss/num_batches:.4f}")
+        avg_loss = epoch_loss / num_batches
+        losses.append(avg_loss)
+        
+        # Learning rate scheduling
+        scheduler.step(avg_loss)
+        
+        # Print progress
+        if epoch % 5 == 0 or epoch == epochs - 1:
+            print(f"Epoch {epoch:03d}, Loss: {avg_loss:.4f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
+            
+            # Check early stopping
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                patience_counter = 0
+                # Save best model
+                best_model = model.state_dict().copy()
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f"Early stopping triggered after {epoch+1} epochs")
+                    break
     
-    return model
+    # Load best model
+    if best_model is not None:
+        model.load_state_dict(best_model)
+    
+    return model, losses
 
-# === Inference Function ===
+#########################################
+# INFERENCE FUNCTIONS
+#########################################
+
 def run_inference(model, combined_data, edge_index, x_train_len, device):
     """Run inference on test data"""
-    print("Running inference on test data...")
+    print("\nRunning inference on test data...")
+    
     model.eval()
     with torch.no_grad():
-        test_data = Data(x=combined_data.to(device), edge_index=edge_index.to(device))
-        logits = model(test_data.x, test_data.edge_index)
+        combined_data = combined_data.to(device)
+        edge_index = edge_index.to(device)
+        
+        # Forward pass
+        logits = model(combined_data, edge_index)
         probs = F.softmax(logits, dim=1)
         
         # Extract predictions for test data
-        test_indices = torch.arange(x_train_len, len(combined_data))
+        test_indices = torch.arange(x_train_len, len(combined_data)).to(device)
         test_logits = logits[test_indices]
         test_probs = probs[test_indices]
         
+        # Get predictions
         preds = test_logits.argmax(dim=1).cpu().numpy()
         confs = test_probs.max(dim=1)[0].cpu().numpy()
+        all_probs = test_probs.cpu().numpy()
+        
+        # Generate embeddings for visualization
+        embeddings = model.get_embeddings(combined_data, edge_index)
+        test_embeddings = embeddings[test_indices].cpu().numpy()
     
-    return preds, confs
+    return preds, confs, all_probs, test_embeddings
 
-# === Main Function ===
-def main():
-    # Parse command-line arguments
-    if len(sys.argv) < 3:
-        print("Usage: python GNN.py <training_fits_file> <testing_fits_file> [output_file]")
-        print("Example: python GNN.py primvs.fits primvs_gaia.fits output_predictions.csv")
-        sys.exit(1)
+#########################################
+# MAIN WORKFLOW FUNCTION
+#########################################
+
+def train_gnn(train_df, test_df, features, label_col, out_file, k_neighbors=8, batch_size=4096, epochs=150):
+    """Complete GNN workflow: preprocessing, training, inference, visualization"""
+    print("\n=== Enhanced GNN Training Workflow ===")
     
-    training_file = sys.argv[1]
-    testing_file = sys.argv[2]
-    output_file = sys.argv[3] if len(sys.argv) > 3 else "fit_with_predictions.csv"
+    # Set up directories
+    os.makedirs('figures', exist_ok=True)
+    os.makedirs(os.path.dirname(out_file) if os.path.dirname(out_file) else '.', exist_ok=True)
     
-    # Initialize configuration
-    config = Config()
-    
-    # Load data
-    train_df = load_fits_to_dataframe(training_file)
-    print(f"Loaded training data: {len(train_df)} rows")
-    
-    test_df = load_fits_to_dataframe(testing_file)
-    print(f"Loaded testing data: {len(test_df)} rows")
-    
-    # Analyze classes
-    print("\nExamining true_class distribution in training data:")
-    train_classes = train_df[config.LABEL_COLUMN].value_counts()
-    print(f"Found {len(train_classes)} unique classes")
-    print(train_classes.head(10))
-    
-    # Preprocess data
-    x_train, x_test, y_train, label_encoder, available_features = preprocess_data(
-        train_df, test_df, config.FEATURE_COLUMNS, config.LABEL_COLUMN
-    )
-    
-    # Setup device
-    if config.USE_CPU:
-        device = torch.device('cpu')
-        print("Using CPU for computation (forced)")
+    # Determine device
+    num_gpus = get_gpu_count()
+    if num_gpus > 0:
+        device = torch.device('cuda')
+        print(f"Using CUDA with {num_gpus} GPUs")
     else:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {device}")
+        device = torch.device('cpu')
+        print("Using CPU")
     
-    # Build KNN graph for training data
-    edge_index_train = build_knn_graph_faiss(
-        x_train, 
-        k=config.K_NEIGHBORS, 
-        use_gpu=(device.type == 'cuda')
+    # === DATA PREPARATION ===
+    x_train, x_test, y_train, label_encoder, train_df, test_df = preprocess_data(
+        train_df, test_df, features, label_col
     )
+    
+    # === GRAPH CONSTRUCTION ===
+    print("\nConstructing KNN graph...")
+    edge_index_train = build_knn_graph(x_train, k=k_neighbors, use_gpu=(device.type == 'cuda'))
     
     # Create training data object
     data = Data(x=x_train, edge_index=edge_index_train, y=y_train)
     data = data.to(device)
     
-    # Initialize and train model
+    # === MODEL INITIALIZATION ===
+    # Set hidden dimension based on data complexity
+    in_channels = x_train.shape[1]
     num_classes = len(label_encoder.classes_)
-    hidden_dim = min(64, max(32, num_classes * 2))
-    model = GCN(in_channels=x_train.shape[1], hidden_channels=hidden_dim, out_channels=num_classes).to(device)
-    model = train_model(model, data, y_train, num_classes, device, config)
+    hidden_dim = min(128, max(64, num_classes * 4))
+    print(f"Using hidden dimension of {hidden_dim}")
     
-    # Build KNN graph for combined data (train + test)
+    model = GCN(
+        in_channels=in_channels,
+        hidden_channels=hidden_dim,
+        out_channels=num_classes,
+        dropout=0.5  # Increased dropout for regularization
+    ).to(device)
+    
+    # === TRAINING ===
+    model, losses = train_model(
+        model, data, y_train, num_classes, device, 
+        batch_size=batch_size, epochs=epochs
+    )
+    
+    # Plot training loss
+    plot_gnn_training_loss(losses)
+    
+    # === INFERENCE ===
+    # Build combined graph (train + test) for inference
     combined_data = torch.cat([x_train, x_test], dim=0)
-    edge_index_combined = build_knn_graph_faiss(
-        combined_data, 
-        k=config.K_NEIGHBORS, 
-        use_gpu=(device.type == 'cuda')
+    edge_index_combined = build_knn_graph(
+        combined_data, k=k_neighbors, use_gpu=(device.type == 'cuda')
     )
     
     # Run inference
-    preds, confs = run_inference(model, combined_data, edge_index_combined, len(x_train), device)
+    preds, confs, all_probs, test_embeddings = run_inference(
+        model, combined_data, edge_index_combined, len(x_train), device
+    )
     
-    # Add predictions to test DataFrame
+    # Decode predictions
+    pred_labels = label_encoder.inverse_transform(preds)
+    
+    # === SAVE RESULTS ===
     test_df_result = test_df.copy()
-    test_df_result["gnn_predicted_class_id"] = preds
-    test_df_result["gnn_predicted_class"] = label_encoder.inverse_transform(preds)
-    test_df_result["gnn_confidence"] = confs
+    test_df_result['gnn_predicted_class_id'] = preds
+    test_df_result['gnn_predicted_class'] = pred_labels
+    test_df_result['gnn_confidence'] = confs
     
-    # Save results
-    test_df_result.to_csv(output_file, index=False)
-    print(f"\nSaved predictions to {output_file}")
+    test_df_result.to_csv(out_file, index=False)
+    print(f"Saved predictions to {out_file}")
+    
+    # === VISUALIZATIONS ===
+    print("\nCreating visualizations...")
+    
+    # Create dashboard
+    create_gnn_dashboard(
+        test_df_result, label_col, features, model, preds, all_probs,
+        label_encoder.classes_, test_embeddings, losses, edge_index_combined
+    )
     
     # Evaluate if ground truth is available
-    if config.LABEL_COLUMN in test_df_result.columns:
+    if label_col in test_df.columns:
         print("\nEvaluation on test set:")
-        y_true = test_df_result[config.LABEL_COLUMN]
-        y_pred = test_df_result["gnn_predicted_class"]
+        y_true = test_df[label_col]
         
         # Print classification metrics
-        print(classification_report(y_true, y_pred))
-        
-        # Create visualizations
-        class_names = label_encoder.classes_
-        try:
-            # Create plots if vis.py functions are available
-            plot_classification_performance(y_true, y_pred, class_names)
-            print("Saved confusion matrix visualization to confusion_matrix.png")
-            
-            # Plot confidence distribution
-            plot_confidence_distribution(confs, preds, class_names)
-            print("Saved confidence distribution to confidence_distribution.png")
-            
-            # Plot period-amplitude diagram if those features exist
-            if "true_period" in test_df_result.columns and "true_amplitude" in test_df_result.columns:
-                plot_period_amplitude(test_df_result, "gnn_predicted_class")
-                print("Saved period-amplitude visualization to period_amplitude.png")
-            
-            # Feature importance analysis
-            feature_importance_analysis(model, data, available_features)
-            print("Saved feature importance visualization to feature_importance.png")
-        except Exception as e:
-            print(f"Visualization error: {e}")
+        print(classification_report(y_true, pred_labels))
     
-    print("\nProcessing complete!")
+    return model, test_df_result
+
+#########################################
+# ENTRY POINT
+#########################################
+
+def main():
+    # Parse command-line arguments or use defaults
+    if len(sys.argv) < 3:
+        train_path = "../PRIMVS/PRIMVS_P_GAIA.fits"
+        test_path = "../PRIMVS/PRIMVS_P.fits"
+        out_file = "gnn_predictions.csv"
+        print("Using default file paths")
+    else:
+        train_path, test_path = sys.argv[1:3]
+        out_file = sys.argv[3] if len(sys.argv) > 3 else "gnn_predictions.csv"
+    
+    # Load data
+    train_df = load_fits_to_df(train_path)
+    test_df = load_fits_to_df(test_path)
+    
+    # Get label column and print class distribution
+    label_col = "best_class_name"
+    print("\nClass distribution in training data:")
+    print(train_df[label_col].value_counts())
+    
+    # Get features
+    features = get_feature_list(train_df, test_df)
+    
+    # Train GNN model
+    model, _ = train_gnn(train_df, test_df, features, label_col, out_file)
+    
+    print("\nGNN processing complete!")
 
 if __name__ == "__main__":
     main()
