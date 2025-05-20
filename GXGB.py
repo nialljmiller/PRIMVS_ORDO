@@ -45,7 +45,7 @@ def get_gpu_count():
     except:
         return 1
 
-# REPLACE the train_xgb function with this enhanced version:
+
 def train_xgb(train_df, test_df, features, label_col, out_file):
     # Preprocess
     X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
@@ -53,9 +53,16 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
     y = label_encoder.transform(train_df[label_col])
     X_test = test_df[features].replace([np.inf, -np.inf], np.nan)
     
-    # Create validation set for early stopping
-    X_train_main, X_val, y_train_main, y_val = train_test_split(
-        X_train, y, test_size=0.2, random_state=42, stratify=y)
+    # Handle classes with just 1 sample by using non-stratified split
+    # or filter out rare classes for validation purposes
+    class_counts = np.bincount(y)
+    if np.min(class_counts) < 2:
+        print("Some classes have only 1 member - using non-stratified validation split")
+        X_train_main, X_val, y_train_main, y_val = train_test_split(
+            X_train, y, test_size=0.2, random_state=42)  # No stratify parameter
+    else:
+        X_train_main, X_val, y_train_main, y_val = train_test_split(
+            X_train, y, test_size=0.2, random_state=42, stratify=y)
     
     dtrain = xgb.DMatrix(X_train_main, label=y_train_main)
     dval = xgb.DMatrix(X_val, label=y_val)
