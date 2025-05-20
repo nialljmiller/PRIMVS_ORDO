@@ -1173,3 +1173,64 @@ def plot_confidence_entropy(df, class_column, output_dir='class_figures', min_pr
     plt.savefig(f'{output_dir}/classification_confidence.jpg', dpi=300, bbox_inches='tight')
     plt.close()
 
+
+
+
+
+
+def visualize_pca(pca_df, original_df, pca_model, output_dir='./figures'):
+    # Plot standard PCA views
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Scatter
+    plt.figure(); plt.scatter(pca_df['PC1'], pca_df['PC2'], s=5, alpha=0.5)
+    plt.xlabel(f"PC1 ({pca_model.explained_variance_ratio_[0]:.2%})")
+    plt.ylabel(f"PC2 ({pca_model.explained_variance_ratio_[1]:.2%})")
+    plt.title("PCA: PC1 vs PC2")
+    plt.grid(); plt.tight_layout()
+    plt.savefig(f"{output_dir}/pca_scatter.png"); plt.close()
+
+    # Density
+    plt.figure(); sns.kdeplot(x=pca_df['PC1'], y=pca_df['PC2'], cmap="Blues", fill=True)
+    plt.xlabel("PC1"); plt.ylabel("PC2"); plt.title("PCA Density"); plt.grid()
+    plt.tight_layout(); plt.savefig(f"{output_dir}/pca_density.png"); plt.close()
+
+    # 2D Hist
+    plt.figure(); h = plt.hist2d(pca_df['PC1'], pca_df['PC2'], bins=100, cmap='viridis', norm=LogNorm())
+    plt.colorbar(h[3]); plt.xlabel("PC1"); plt.ylabel("PC2")
+    plt.title("PCA Histogram"); plt.tight_layout()
+    plt.savefig(f"{output_dir}/pca_histogram.png"); plt.close()
+
+    # Scree
+    plt.figure()
+    plt.bar(range(1, len(pca_model.explained_variance_ratio_)+1), pca_model.explained_variance_ratio_)
+    plt.step(range(1, len(pca_model.explained_variance_ratio_)+1), np.cumsum(pca_model.explained_variance_ratio_), label='Cumulative')
+    plt.xlabel('PC'); plt.ylabel('Explained Variance'); plt.legend()
+    plt.tight_layout(); plt.savefig(f"{output_dir}/pca_scree.png"); plt.close()
+
+    # Loadings
+    load = pd.DataFrame(pca_model.components_.T, index=pca_model.feature_names_in_, columns=[f'PC{i+1}' for i in range(pca_model.n_components_)])
+    top = pd.concat([load['PC1'].abs().sort_values(ascending=False), load['PC2'].abs().sort_values(ascending=False)]).index.unique()[:15]
+    plt.figure(figsize=(10, 6)); sns.heatmap(load.loc[top, ['PC1', 'PC2']], annot=True, cmap='coolwarm', center=0)
+    plt.title("Top Feature Loadings"); plt.tight_layout()
+    plt.savefig(f"{output_dir}/pca_loadings.png"); plt.close()
+
+    # Coloured scatter: FAP, period, amplitude
+    if 'best_fap' in original_df.columns:
+        plt.figure()
+        plt.scatter(pca_df['PC1'], pca_df['PC2'], c=original_df['best_fap'], cmap='viridis_r', s=10, alpha=0.7)
+        plt.colorbar(label='FAP'); plt.tight_layout()
+        plt.savefig(f"{output_dir}/pca_fap.png"); plt.close()
+
+    if 'true_period' in original_df.columns:
+        plt.figure()
+        plt.scatter(pca_df['PC1'], pca_df['PC2'], c=np.log10(np.clip(original_df['true_period'].values, 0.01, None)), cmap='plasma', s=10, alpha=0.7)
+        plt.colorbar(label='log10(Period)'); plt.tight_layout()
+        plt.savefig(f"{output_dir}/pca_period.png"); plt.close()
+
+    if 'true_amplitude' in original_df.columns:
+        plt.figure()
+        plt.scatter(pca_df['PC1'], pca_df['PC2'], c=np.log10(np.clip(original_df['true_amplitude'].values, 0.001, None)), cmap='inferno', s=10, alpha=0.7)
+        plt.colorbar(label='log10(Amplitude)'); plt.tight_layout()
+        plt.savefig(f"{output_dir}/pca_amplitude.png"); plt.close()
+

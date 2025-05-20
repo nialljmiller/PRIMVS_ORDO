@@ -6,261 +6,136 @@ import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report
 from astropy.io import fits
-import matplotlib.pyplot as plt
-import seaborn as sns
-# Import visualization functions
 from vis import *
 
-# === Load FITS Files ===
-def load_fits_to_dataframe(fits_path):
-    print(f"Loading data from {fits_path}...")
-    with fits.open(fits_path) as hdul:
-        data = hdul[1].data
-        try:
-            return pd.DataFrame(data)
-        except Exception as e:
-            print(f"Direct conversion failed: {e}")
-            try:
-                return pd.DataFrame.from_records(data)
-            except Exception as e:
-                print(f"Structured array approach failed: {e}")
-                columns = data.names
-                df = pd.DataFrame()
-                for col in columns:
-                    df[col] = data[col]
-                return df
+def load_fits_to_df(path):
+    # Read a FITS file into a DataFrame
+    print(f"Loading {path}...")
+    with fits.open(path) as hdul:
+        return pd.DataFrame(hdul[1].data)
 
-# === Feature Selection ===
-def select_features(train_df, test_df):
-    # Define feature categories
-    VARIABILITY_FEATURES = [
-        "MAD", "eta", "eta_e", "true_amplitude", "mean_var", "std_nxs",
-        "range_cum_sum", "max_slope", "percent_amp", "stet_k", "roms",
-        "lag_auto", "Cody_M", "AD", "med_BRP", "p_to_p_var"
-    ]
+def get_feature_list(train, test):
+    # Basic feature sets we’ve previously used
+    variability = ["MAD", "eta", "eta_e", "true_amplitude", "mean_var", "std_nxs", "range_cum_sum", "max_slope", "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD", "med_BRP", "p_to_p_var"]
+    colour = ["z_med_mag-ks_med_mag", "y_med_mag-ks_med_mag", "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag"]
+    mags = ["ks_med_mag", "ks_mean_mag", "ks_std_mag", "ks_mad_mag", "j_med_mag", "h_med_mag"]
+    period = ["true_period", "ls_fap", "pdm_fap", "ce_fap", "gp_fap"]
+    periodograms = ["ls_y_y_0", "ls_peak_width_0", "pdm_y_y_0", "pdm_peak_width_0", "ce_y_y_0", "ce_peak_width_0"]
+    quality = ["chisq", "uwe"]
+    coords = ["l", "b", "parallax", "pmra", "pmdec"]
+    embeddings = [str(i) for i in range(128)]
 
-    COLOR_FEATURES = [
-        "z_med_mag-ks_med_mag", "y_med_mag-ks_med_mag",
-        "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag"
-    ]
+    full_set = variability + colour + mags + period + periodograms + quality + coords + embeddings
+    common = set(train.columns).intersection(test.columns)
+    usable = [f for f in full_set if f in common]
+    print(f"Using {len(usable)} of {len(full_set)} total features")
+    return usable
 
-    MAGNITUDE_FEATURES = [
-        "ks_med_mag", "ks_mean_mag", "ks_std_mag", "ks_mad_mag",
-        "j_med_mag", "h_med_mag"
-    ]
-
-    PERIOD_FEATURES = [
-        "true_period", "ls_fap", "pdm_fap", "ce_fap", "gp_fap"
-    ]
-
-    PERIODOGRAM_FEATURES = [
-        "ls_y_y_0", "ls_peak_width_0", "pdm_y_y_0", "pdm_peak_width_0",
-        "ce_y_y_0", "ce_peak_width_0"
-    ]
-
-    QUALITY_FEATURES = [
-        "chisq", "uwe"
-    ]
-
-    POSITION_FEATURES = [
-        "l", "b", "parallax", "pmra", "pmdec"
-    ]
-
-    # Include contrastive learning embeddings (128 dimensions)
-    EMBEDDING_FEATURES = [str(i) for i in range(128)]
-
-    # Combine all feature groups
-    ALL_FEATURES = (VARIABILITY_FEATURES + COLOR_FEATURES + MAGNITUDE_FEATURES +
-                   PERIOD_FEATURES + PERIODOGRAM_FEATURES + QUALITY_FEATURES +
-                   POSITION_FEATURES + EMBEDDING_FEATURES)
-
-    # Filter for features present in both datasets
-    train_features = set(train_df.columns)
-    test_features = set(test_df.columns)
-    common_features = list(train_features.intersection(test_features))
-    available_features = [f for f in ALL_FEATURES if f in common_features]
-
-    print(f"Using {len(available_features)} features from {len(ALL_FEATURES)} candidates")
-    print(f"Features: {available_features}")
-
-    return available_features
-
-# === Model Training and Prediction ===
-def train_xgboost_gpu(train_df, test_df, features, label_col, output_file):
-    # Prepare data
+def train_xgb(train_df, test_df, features, label_col, out_file):
+    # Preprocess
     X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
-
-    # Encode labels
-    label_encoder = LabelEncoder()
-    y_train_encoded = label_encoder.fit_transform(train_df[label_col])
-
+    y = LabelEncoder().fit_transform(train_df[label_col])
     X_test = test_df[features].replace([np.inf, -np.inf], np.nan)
 
-    # Create DMatrix - optimized data structure for XGBoost
-    print("Converting data to DMatrix format...")
-    dtrain = xgb.DMatrix(X_train, label=y_train_encoded)
+    dtrain = xgb.DMatrix(X_train, label=y)
     dtest = xgb.DMatrix(X_test)
 
-    # Calculate class weights for imbalanced data
-    class_counts = np.bincount(y_train_encoded)
-    total_samples = len(y_train_encoded)
-    class_weights = total_samples / (len(class_counts) * class_counts)
+    # Handle class imbalance
+    weights = len(y) / (np.bincount(y) * len(np.bincount(y)))
 
-    # Parameters optimized for astronomical classification with GPU
     params = {
         'objective': 'multi:softprob',
-        'num_class': len(label_encoder.classes_),
+        'num_class': len(np.unique(y)),
         'eval_metric': 'mlogloss',
         'learning_rate': 0.05,
         'max_depth': 12,
         'min_child_weight': 30,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
-        'tree_method': 'gpu_hist',       # Use GPU for training
-        'predictor': 'gpu_predictor',    # Use GPU for prediction
-        'gpu_id': 0,                     # Specify which GPU to use
-        'max_bin': 512                   # Optimization for GPU
+        'tree_method': 'gpu_hist',
+        'predictor': 'gpu_predictor',
+        'gpu_id': 0,
+        'max_bin': 512
     }
 
-    # Print class distribution and weights
-    print("\nClass distribution:")
-    for i, cls in enumerate(label_encoder.classes_):
-        count = class_counts[i]
-        weight = class_weights[i]
-        print(f"  {cls}: {count} samples, weight: {weight:.3f}")
+    print("Training...")
+    model = xgb.train(params, dtrain, num_boost_round=2000, evals=[(dtrain, 'train')], verbose_eval=50)
 
-    # Train the model
-    print(f"\nTraining XGBoost model on GPU with {len(features)} features...")
-    model = xgb.train(
-        params,
-        dtrain,
-        num_boost_round=2000,      # Increase for better performance if time permits
-        evals=[(dtrain, 'train')],
-        verbose_eval=50,          # Print evaluation every 50 rounds
-    )
-
-    # Run inference on GPU
-    print(f"Running inference on {len(X_test)} samples...")
+    # Predict
     probs = model.predict(dtest)
     preds = np.argmax(probs, axis=1)
     confs = np.max(probs, axis=1)
 
-    # Convert predictions back to original labels
+    # Decode labels
+    label_encoder = LabelEncoder().fit(train_df[label_col])
     pred_labels = label_encoder.inverse_transform(preds)
 
-    # Add predictions to test DataFrame
-    test_df_result = test_df.copy()
-    test_df_result["xgb_predicted_class_id"] = preds
-    test_df_result["xgb_predicted_class"] = pred_labels
-    test_df_result["xgb_confidence"] = confs
+    # Save output
+    test_df = test_df.copy()
+    test_df['xgb_predicted_class_id'] = preds
+    test_df['xgb_predicted_class'] = pred_labels
+    test_df['xgb_confidence'] = confs
+    test_df.to_csv(out_file, index=False)
+    print(f"Saved predictions to {out_file}")
 
-    # Save results
-    test_df_result.to_csv(output_file, index=False)
-    print(f"\nSaved predictions to {output_file}")
+    # Importance
+    imp = model.get_score(importance_type='gain')
+    top_feats = sorted(imp.items(), key=lambda x: x[1], reverse=True)[:20]
+    print("\nTop features:")
+    for f, score in top_feats:
+        print(f"  {f}: {score:.3f}")
 
-    # Feature importance analysis
-    importance = model.get_score(importance_type='gain')
-    sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+    # Visuals
+    plot_period_amplitude(test_df, "xgb_predicted_class")
+    plot_galactic_distribution(test_df, "xgb_predicted_class")
+    plot_color_color(test_df, "xgb_predicted_class")
+    plot_astronomical_map(test_df, "xgb_predicted_class")
+    plot_hr_diagram(test_df, "xgb_predicted_class")
 
-    print("\nTop 20 features by importance:")
-    for feature, score in sorted_importance[:20]:
-        print(f"  {feature}: {score:.4f}")
+    plot_bailey_diagram(test_df, "xgb_predicted_class")
+    plot_galactic_coords(test_df, "xgb_predicted_class")
+    plot_confidence_entropy(test_df, "xgb_predicted_class")
+    plot_xgb_class_probability_heatmap(probs, label_encoder.classes_)
+    plot_xgb_top2_confidence_scatter(probs, preds, label_encoder.classes_)
 
-    # Create enhanced visualizations
-    feature_names = [x[0] for x in sorted_importance]
-    importance_values = [x[1] for x in sorted_importance]
+    #things that require extra shit
+    feat_names = [x[0] for x in top_feats]
+    scores = [x[1] for x in top_feats]
+    plot_xgb_feature_importance(feat_names, scores)
+    plot_confidence_distribution(confs, preds, label_encoder.classes_)
+    top_feats = features[:12] if len(features) > 12 else features
+    plot_feature_class_correlations(test_df, top_feats, "xgb_predicted_class")
 
-    # Define class_names outside the conditional block (needed for all visualizations)
-    class_names = label_encoder.classes_
-    
-    # Use the enhanced feature importance plot
-    plot_xgb_feature_importance(feature_names, importance_values, top_n=20)
-    print("Saved feature importance visualization to xgb_feature_importance.png")
-
-
-    # Plot confidence distribution
-    plot_confidence_distribution(confs, preds, class_names)
-    print("Saved confidence distribution plot to confidence_distribution.png")
-    
-    # Feature plots
-    plot_period_amplitude(test_df_result, "xgb_predicted_class")
-    plot_galactic_distribution(test_df_result, "xgb_predicted_class")
-    plot_color_color(test_df_result, "xgb_predicted_class")
-    plot_astronomical_map(test_df_result, "xgb_predicted_class")
-    
-    # These might need additional columns that may not exist
-    plot_hr_diagram(test_df_result, "xgb_predicted_class")
-    
-    # Plot feature distributions by class
-    selected_features = features[:12] if len(features) > 12 else features
-    plot_feature_class_correlations(test_df_result, selected_features, "xgb_predicted_class")
-    print("Saved feature class distributions to feature_class_distributions.png")
-    
-    # These might need additional arguments to work correctly
-    plot_xgb_class_probability_heatmap(probs, class_names)
-    plot_xgb_top2_confidence_scatter(probs, preds, class_names)
-
-    # In GXGB.py after model training
-    plot_bailey_diagram(test_df_result, "xgb_predicted_class")
-    plot_galactic_coords(test_df_result, "xgb_predicted_class")
-    plot_confidence_entropy(test_df_result, "xgb_predicted_class")
-
-    # Evaluate if ground truth is available
-    if label_col in test_df_result.columns:
-        print("\nEvaluation on test set:")
-        y_true = test_df_result[label_col]
-        y_pred = test_df_result["xgb_predicted_class"]
-
-        # Print classification report
+    # If ground truth exists in test
+    if label_col in test_df:
+        y_true = test_df[label_col]
+        y_pred = test_df['xgb_predicted_class']
+        print("\nClassification Report:")
         print(classification_report(y_true, y_pred))
+        plot_classification_performance(y_true, y_pred, label_encoder.classes_)
+        plot_misclassification_analysis(y_true, y_pred, probs, label_encoder.classes_)
 
-        # Plot confusion matrix
-        plot_classification_performance(y_true, y_pred, class_names)
-        print("Saved confusion matrix to confusion_matrix.png")
-        
-        # This visualization needs ground truth
-        plot_misclassification_analysis(y_true, y_pred, probs, class_names)
-    else:
-        print(f"\nGround truth column '{label_col}' not found in test data.")
-        print("Skipping evaluation metrics that require ground truth.")
+    return model
 
-    return model, label_encoder, probs    
-
-# === Main Function ===
 def main():
+    # Inputs from CLI or defaults
     if len(sys.argv) < 3:
-        print("Usage: python xgb_classify.py <training_fits_file> <testing_fits_file> [output_file]")
-        training_file = "../PRIMVS/PRIMVS_P_GAIA.fits"
-        testing_file = "../PRIMVS/PRIMVS_P.fits"
-        output_file = "xgb_predictions.csv"
-        print("Proceeding withdefaults")
+        train_path = "../PRIMVS/PRIMVS_P_GAIA.fits"
+        test_path = "../PRIMVS/PRIMVS_P.fits"
+        out_file = "xgb_predictions.csv"
+        print("Using default file paths")
     else:
-        training_file = sys.argv[1] if len(sys.argv) > 1 else "../PRIMVS/PRIMVS_P_GAIA.fits"
-        testing_file = sys.argv[2] if len(sys.argv) > 2 else "../PRIMVS/PRIMVS_P.fits"
-        output_file = sys.argv[3] if len(sys.argv) > 3 else "xgb_predictions.csv"
+        train_path, test_path = sys.argv[1:3]
+        out_file = sys.argv[3] if len(sys.argv) > 3 else "xgb_predictions.csv"
 
+    train_df = load_fits_to_df(train_path)
+    test_df = load_fits_to_df(test_path)
 
-    # Load data
-    train_df = load_fits_to_dataframe(training_file)
-    print(f"Loaded training data: {len(train_df)} rows")
+    label = "best_class_name"
+    print(train_df[label].value_counts())
 
-    test_df = load_fits_to_dataframe(testing_file)
-    print(f"Loaded testing data: {len(test_df)} rows")
-
-    # Analyze classes
-    label_col = "best_class_name"  # Change if your label column is different
-    print("\nExamining class distribution in training data:")
-    train_classes = train_df[label_col].value_counts()
-    print(f"Found {len(train_classes)} unique classes")
-    print(train_classes.head(10))
-
-    # Select features
-    features = select_features(train_df, test_df)
-
-    # Train and predict
-    model, label_encoder, probs = train_xgboost_gpu(train_df, test_df, features, label_col, output_file)
-
-    print("\nProcessing complete!")
+    feats = get_feature_list(train_df, test_df)
+    train_xgb(train_df, test_df, feats, label, out_file)
 
 if __name__ == "__main__":
     main()
