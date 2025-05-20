@@ -65,7 +65,7 @@ def plot_classification_performance(y_true, y_pred, class_names):
     plt.ylabel('True Label')
     plt.title('Normalized Confusion Matrix')
     plt.tight_layout()
-    plt.savefig('class_figures/confusion_matrix.png', dpi=300)
+    plt.savefig('figures/confusion_matrix.png', dpi=300)
     #plt.show()
     
     # Print classification report
@@ -115,7 +115,7 @@ def visualize_knn_graph_sample(edge_index, node_labels, class_names, n_samples=5
     
     plt.title(f'KNN Graph Structure Sample (n={n_samples} nodes)', fontsize=16)
     plt.axis('off')
-    plt.savefig('class_figures/knn_graph_sample.png', dpi=300)
+    plt.savefig('figures/knn_graph_sample.png', dpi=300)
     #plt.show()
 
 
@@ -168,7 +168,7 @@ def plot_period_amplitude(df, class_column, min_confidence=0.7):
         plt.legend(fontsize=10, loc='upper left', bbox_to_anchor=(1, 1))
     
     plt.tight_layout()
-    plt.savefig('class_figures/bailey_diagram.png', dpi=300)
+    plt.savefig('figures/bailey_diagram.png', dpi=300)
     #plt.show()
 
 
@@ -263,7 +263,7 @@ def plot_hr_diagram(df, class_column, color_index_col=None, magnitude_col=None, 
         plt.legend(fontsize=10, loc='upper left', bbox_to_anchor=(1, 1))
     
     plt.tight_layout()
-    plt.savefig('class_figures/hr_diagram.png', dpi=300)
+    plt.savefig('figures/hr_diagram.png', dpi=300)
     #plt.show()
 
 
@@ -369,7 +369,7 @@ def plot_galactic_distribution(df, class_column, min_confidence=0.7, density_con
     plt.grid(alpha=0.3, linestyle='--')
     
     plt.tight_layout()
-    plt.savefig('class_figures/galactic_density.png', dpi=300)
+    plt.savefig('figures/galactic_density.png', dpi=300)
     #plt.show()
 
 
@@ -457,7 +457,7 @@ def plot_color_color(df, class_column, x_color=None, y_color=None, min_confidenc
         plt.legend(fontsize=10, loc='upper left', bbox_to_anchor=(1, 1))
     
     plt.tight_layout()
-    plt.savefig('class_figures/color_color_diagram.png', dpi=300)
+    plt.savefig('figures/color_color_diagram.png', dpi=300)
     #plt.show()
 
 
@@ -483,7 +483,7 @@ def plot_feature_class_correlations(df, features, class_column):
         plt.legend()
     
     plt.tight_layout()
-    plt.savefig('class_figures/feature_class_distributions.png', dpi=300)
+    plt.savefig('figures/feature_class_distributions.png', dpi=300)
     #plt.show()
 
 
@@ -506,7 +506,7 @@ def feature_importance_analysis(model, data, feature_names):
     plt.xlabel('Mean Absolute Weight')
     plt.title('Top 20 Feature Importance in GNN First Layer')
     plt.tight_layout()
-    plt.savefig('class_figures/feature_importance.png', dpi=300)
+    plt.savefig('figures/feature_importance.png', dpi=300)
     #plt.show()
 
 
@@ -557,7 +557,7 @@ def visualize_embeddings(model, data, labels, class_names, test_indices):
     plt.legend(fontsize=12)
     plt.title('t-SNE Projection of GNN Node Embeddings', fontsize=16)
     plt.tight_layout()
-    plt.savefig('class_figures/node_embeddings_tsne.png', dpi=300)
+    plt.savefig('figures/node_embeddings_tsne.png', dpi=300)
     
     # Alternative: PCA
     pca = PCA(n_components=2)
@@ -573,7 +573,7 @@ def visualize_embeddings(model, data, labels, class_names, test_indices):
     plt.legend(fontsize=12)
     plt.title(f'PCA Projection of GNN Node Embeddings\nExplained Variance: {sum(pca.explained_variance_ratio_):.2f}', fontsize=16)
     plt.tight_layout()
-    plt.savefig('class_figures/node_embeddings_pca.png', dpi=300)
+    plt.savefig('figures/node_embeddings_pca.png', dpi=300)
 
 
 def plot_confidence_distribution(confidences, predictions, class_names):
@@ -588,7 +588,7 @@ def plot_confidence_distribution(confidences, predictions, class_names):
     plt.title('Distribution of Model Confidence by Predicted Class')
     plt.legend()
     plt.grid(alpha=0.3)
-    plt.savefig('class_figures/confidence_distribution.png', dpi=300)
+    plt.savefig('figures/confidence_distribution.png', dpi=300)
     #plt.show()
 
 
@@ -617,7 +617,7 @@ def plot_xgb_feature_importance(feature_names, importance_values, top_n=20):
     plt.title(f'Top {top_n} Feature Importance', fontsize=16)
     plt.grid(axis='x', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plt.savefig('class_figures/xgb_feature_importance.png', dpi=300)
+    plt.savefig('figures/xgb_feature_importance.png', dpi=300)
     #plt.show()
 
 
@@ -656,7 +656,7 @@ def plot_xgb_class_probability_heatmap(probs, class_names, max_samples=100):
     
     plt.title('Class Probability Heatmap (Sample of Predictions)', fontsize=16)
     plt.tight_layout()
-    plt.savefig('class_figures/xgb_class_probabilities.png', dpi=300)
+    plt.savefig('figures/xgb_class_probabilities.png', dpi=300)
     #plt.show()
 
 
@@ -698,7 +698,7 @@ def plot_xgb_top2_confidence_scatter(probs, preds, class_names):
     plt.grid(alpha=0.3, linestyle='--')
     
     plt.tight_layout()
-    plt.savefig('class_figures/xgb_confidence_analysis.png', dpi=300)
+    plt.savefig('figures/xgb_confidence_analysis.png', dpi=300)
     
     # Create a second plot showing the confidence gap distribution by class
     plt.figure(figsize=(12, 6))
@@ -714,7 +714,7 @@ def plot_xgb_top2_confidence_scatter(probs, preds, class_names):
     plt.legend(fontsize=10)
     
     plt.tight_layout()
-    plt.savefig('class_figures/xgb_confidence_gap.png', dpi=300)
+    plt.savefig('figures/xgb_confidence_gap.png', dpi=300)
     #plt.show()
 
 
@@ -782,7 +782,7 @@ def plot_misclassification_analysis(y_true, y_pred, probs, class_names):
     plt.colorbar(label='Predicted Class')
     
     plt.tight_layout()
-    plt.savefig('class_figures/misclassification_analysis.png', dpi=300)
+    plt.savefig('figures/misclassification_analysis.png', dpi=300)
     
     # Create a histogram of misclassifications by true class
     plt.figure(figsize=(14, 8))
@@ -821,7 +821,7 @@ def plot_misclassification_analysis(y_true, y_pred, probs, class_names):
         )
     
     plt.tight_layout()
-    plt.savefig('class_figures/misclassification_by_class.png', dpi=300)
+    plt.savefig('figures/misclassification_by_class.png', dpi=300)
     
     # Create confusion matrix specifically for misclassified samples
     cm_misc = confusion_matrix(y_true_encoded[misclassified], y_pred_encoded[misclassified])
@@ -833,7 +833,7 @@ def plot_misclassification_analysis(y_true, y_pred, probs, class_names):
     plt.ylabel('True Label')
     plt.title('Confusion Matrix for Misclassified Samples Only')
     plt.tight_layout()
-    plt.savefig('class_figures/misclassification_confusion_matrix.png', dpi=300)
+    plt.savefig('figures/misclassification_confusion_matrix.png', dpi=300)
     #plt.show()
 
 # New functions from paste.txt, adapted for GXGB.py
@@ -1028,7 +1028,7 @@ def plot_bailey_diagram(df, class_column, output_dir='class_figures', min_prob=0
     
     # Save figure
     os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f'{output_dir}/bailey_diagram.jpg', dpi=300, bbox_inches='tight')
+    plt.savefig('figures/bailey_diagram.jpg', dpi=300, bbox_inches='tight')
     plt.close()
 
 

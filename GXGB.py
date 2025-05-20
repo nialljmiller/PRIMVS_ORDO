@@ -32,72 +32,84 @@ def get_feature_list(train, test):
     return usable
 
 
-# Add this at the top of your file with other imports
+
+# Add at top with imports
+import subprocess
+from sklearn.model_selection import train_test_split
+
+# Auto-detect GPU count
 def get_gpu_count():
     try:
-        import subprocess
         result = subprocess.run(['nvidia-smi', '-L'], stdout=subprocess.PIPE)
         return len(result.stdout.decode('utf-8').strip().split('\n'))
     except:
-        try:
-            # Alternative method using pycuda
-            import pycuda.driver as cuda
-            cuda.init()
-            return cuda.Device.count()
-        except:
-            return 1  # Default to 1 if detection fails
+        return 1
 
-
+# REPLACE the train_xgb function with this enhanced version:
 def train_xgb(train_df, test_df, features, label_col, out_file):
     # Preprocess
     X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
-    y = LabelEncoder().fit_transform(train_df[label_col])
+    label_encoder = LabelEncoder().fit(train_df[label_col])
+    y = label_encoder.transform(train_df[label_col])
     X_test = test_df[features].replace([np.inf, -np.inf], np.nan)
-
-    dtrain = xgb.DMatrix(X_train, label=y)
+    
+    # Create validation set for early stopping
+    X_train_main, X_val, y_train_main, y_val = train_test_split(
+        X_train, y, test_size=0.2, random_state=42, stratify=y)
+    
+    dtrain = xgb.DMatrix(X_train_main, label=y_train_main)
+    dval = xgb.DMatrix(X_val, label=y_val)
     dtest = xgb.DMatrix(X_test)
-
+    
     # Handle class imbalance
     weights = len(y) / (np.bincount(y) * len(np.bincount(y)))
-
-
-
-    # In your train_xgb function, replace the params block with this:
+    
+    # Get GPU count
     num_gpus = get_gpu_count()
-    print(f"Auto-detected {num_gpus} GPUs")
-
+    print(f"Auto-detected {num_gpus} GPUs for training")
+    
+    # Enhanced params for better performance
     params = {
         'objective': 'multi:softprob',
         'num_class': len(np.unique(y)),
         'eval_metric': 'mlogloss',
-        'learning_rate': 0.01,  # Lower learning rate for higher rounds
-        'max_depth': 15,        # Increased from 12
+        'learning_rate': 0.01,           # Lower for more stability with more rounds
+        'max_depth': 15,                 # Increased from 12
         'min_child_weight': 30,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'tree_method': 'gpu_hist',
         'predictor': 'gpu_predictor',
-        'max_bin': 1024         # Higher precision binning
+        'max_bin': 1024,                 # Doubled for more precision
+        'sampling_method': 'gradient_based',  # Better sampling
+        'grow_policy': 'lossguide',      # Alternative tree growth
+        'max_leaves': 256,               # Control leaf count
+        'gamma': 0.1                     # Regularization
     }
     
-    # Auto-configure GPU usage
+    # Configure GPU usage
     if num_gpus > 1:
         params['n_gpus'] = num_gpus
     else:
-        params['gpu_id'] = 0    # Use gpu_id only when single GPU
-
-
-
-    print("Training...")
-    model = xgb.train(params, dtrain, num_boost_round=2000, evals=[(dtrain, 'train')], verbose_eval=50)
-
+        params['gpu_id'] = 0
+    
+    print("Training with enhanced compute settings...")
+    model = xgb.train(
+        params, 
+        dtrain, 
+        num_boost_round=5000,           # Significantly increased
+        early_stopping_rounds=100,      # Stop when validation doesn't improve
+        evals=[(dtrain, 'train'), (dval, 'validation')],
+        verbose_eval=50
+    )
+    
+    # Rest of your function remains the same...
     # Predict
     probs = model.predict(dtest)
     preds = np.argmax(probs, axis=1)
     confs = np.max(probs, axis=1)
-
-    # Decode labels
-    label_encoder = LabelEncoder().fit(train_df[label_col])
+    
+    # Continue with the rest of your existing function...
     pred_labels = label_encoder.inverse_transform(preds)
 
     # Save output
@@ -107,7 +119,8 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
     test_df['xgb_confidence'] = confs
     test_df.to_csv(out_file, index=False)
     print(f"Saved predictions to {out_file}")
-
+    
+    
     # Importance
     imp = model.get_score(importance_type='gain')
     top_feats = sorted(imp.items(), key=lambda x: x[1], reverse=True)[:20]
