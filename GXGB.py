@@ -19,8 +19,8 @@ def get_feature_list(train, test):
     variability = ["MAD", "eta", "eta_e", "true_amplitude", "mean_var", "std_nxs", "range_cum_sum", "max_slope", "percent_amp", "stet_k", "roms", "lag_auto", "Cody_M", "AD", "med_BRP", "p_to_p_var"]
     colour = ["z_med_mag-ks_med_mag", "y_med_mag-ks_med_mag", "j_med_mag-ks_med_mag", "h_med_mag-ks_med_mag"]
     mags = ["ks_med_mag", "ks_mean_mag", "ks_std_mag", "ks_mad_mag", "j_med_mag", "h_med_mag"]
-    period = ["true_period", "ls_fap", "pdm_fap", "ce_fap", "gp_fap"]
-    periodograms = ["ls_y_y_0", "ls_peak_width_0", "pdm_y_y_0", "pdm_peak_width_0", "ce_y_y_0", "ce_peak_width_0"]
+    period = ["true_period"]#, "ls_fap", "pdm_fap", "ce_fap", "gp_fap"]
+    periodograms = []#"ls_y_y_0", "ls_peak_width_0", "pdm_y_y_0", "pdm_peak_width_0", "ce_y_y_0", "ce_peak_width_0"]
     quality = ["chisq", "uwe"]
     coords = ["l", "b", "parallax", "pmra", "pmdec"]
     embeddings = [str(i) for i in range(128)]
@@ -46,104 +46,151 @@ def get_gpu_count():
         return 1
 
 
+
+
+
+
+
 def train_xgb(train_df, test_df, features, label_col, out_file):
-    # Preprocess
+    """
+    Enhanced XGBoost training with improved preprocessing, class balancing, and overfitting control.
+    """
+    from sklearn.preprocessing import StandardScaler, RobustScaler
+    from sklearn.impute import SimpleImputer
+    import numpy as np
+    
+    # === IMPROVED PREPROCESSING ===
+    print("Applying enhanced preprocessing...")
+    
+    # Step 1: Replace infinities and prepare data
     X_train = train_df[features].replace([np.inf, -np.inf], np.nan)
-    label_encoder = LabelEncoder().fit(train_df[label_col])
-    y = label_encoder.transform(train_df[label_col])
     X_test = test_df[features].replace([np.inf, -np.inf], np.nan)
     
-    # Handle classes with just 1 sample by using non-stratified split
-    # or filter out rare classes for validation purposes
+    # Step 2: Get statistics from training data only
+    train_quantiles = X_train.quantile([0.001, 0.999])
+    train_min = train_quantiles.iloc[0]
+    train_max = train_quantiles.iloc[1]
+    
+    # Step 3: Apply clipping to both datasets to handle outliers
+    X_train = X_train.clip(lower=train_min, upper=train_max, axis=1)
+    X_test = X_test.clip(lower=train_min, upper=train_max, axis=1)
+    
+    # Step 4: Intelligent imputation (median for each feature)
+    imputer = SimpleImputer(strategy='median')
+    X_train_imputed = imputer.fit_transform(X_train)
+    X_test_imputed = imputer.transform(X_test)
+    
+    # Step 5: Standardize features (RobustScaler handles outliers better)
+    scaler = RobustScaler()  # More robust to outliers than StandardScaler
+    X_train_scaled = scaler.fit_transform(X_train_imputed)
+    X_test_scaled = scaler.transform(X_test_imputed)
+    
+    # Convert back to DataFrames for easier handling
+    X_train = pd.DataFrame(X_train_scaled, columns=features, index=X_train.index)
+    X_test = pd.DataFrame(X_test_scaled, columns=features, index=X_test.index)
+    
+    # === IMPROVED CLASS HANDLING ===
+    # Process labels
+    label_encoder = LabelEncoder().fit(train_df[label_col])
+    y = label_encoder.transform(train_df[label_col])
+    
+    # Create validation split (handle rare classes)
     class_counts = np.bincount(y)
     if np.min(class_counts) < 2:
-        print("Some classes have only 1 member - using non-stratified validation split")
+        print("Found rare classes - using non-stratified validation split")
         X_train_main, X_val, y_train_main, y_val = train_test_split(
-            X_train, y, test_size=0.2, random_state=42)  # No stratify parameter
+            X_train, y, test_size=0.2, random_state=42)
     else:
         X_train_main, X_val, y_train_main, y_val = train_test_split(
             X_train, y, test_size=0.2, random_state=42, stratify=y)
     
-    dtrain = xgb.DMatrix(X_train_main, label=y_train_main)
+    # Better class weighting - smoother weight scale
+    class_weights = {}
+    for i, count in enumerate(class_counts):
+        # Square root scaling for softer penalties on rare classes
+        class_weights[i] = np.sqrt(np.sum(class_counts) / (len(class_counts) * count))
+    
+    print("Class weights:", {label_encoder.inverse_transform([i])[0]: f"{w:.2f}" 
+                            for i, w in class_weights.items()})
+    
+    # Create sample weights for training data
+    sample_weights = np.array([class_weights[y_i] for y_i in y_train_main])
+    
+    # === IMPROVED MODEL TRAINING ===
+    # Convert to XGBoost format with sample weights
+    dtrain = xgb.DMatrix(X_train_main, label=y_train_main, weight=sample_weights)
     dval = xgb.DMatrix(X_val, label=y_val)
     dtest = xgb.DMatrix(X_test)
     
-    # Handle class imbalance
-    weights = len(y) / (np.bincount(y) * len(np.bincount(y)))
-    
-    # Get GPU count
+    # Auto-detect GPUs
     num_gpus = get_gpu_count()
     print(f"Auto-detected {num_gpus} GPUs for training")
     
-    # Enhanced params for better performance
+    # Optimized parameters with overfitting controls
     params = {
         'objective': 'multi:softprob',
         'num_class': len(np.unique(y)),
         'eval_metric': 'mlogloss',
-        'learning_rate': 0.01,           # Lower for more stability with more rounds
-        'max_depth': 15,                 # Increased from 12
-        'min_child_weight': 30,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'tree_method': 'hist',
-        'predictor': 'gpu_predictor',
-        'max_bin': 1024,                 # Doubled for more precision
-        'sampling_method': 'gradient_based',  # Better sampling
-        'grow_policy': 'lossguide',      # Alternative tree growth
-        'max_leaves': 256,               # Control leaf count
-        'gamma': 0.1                     # Regularization
+        'learning_rate': 0.01,
+        'max_depth': 10,              # Reduced to help with overfitting
+        'min_child_weight': 5,        # Reduced for better balance
+        'subsample': 0.7,             # Reduced to prevent overfitting
+        'colsample_bytree': 0.7,      # Column subsampling reduces overfitting
+        'colsample_bylevel': 0.7,     # Helps with high-dimensional data
+        'reg_alpha': 0.1,             # L1 regularization 
+        'reg_lambda': 1.0,            # L2 regularization
+        'tree_method': 'hist',        # Works on both CPU and GPU
+        'max_bin': 256,               # Reduced for faster training
+        'grow_policy': 'lossguide'
     }
     
-
-    # Configure GPU usage in new XGBoost 2.0+ way
-    if num_gpus > 1:
-        # Multi-GPU setup for XGBoost 2.0+
-        params['device'] = 'cuda'
-        # Use distributed training for multiple GPUs
-        params['n_jobs'] = num_gpus
-    else:
-        # Single GPU setup
-        params['device'] = 'cuda:0'
-
-
+    # Configure GPU efficiently
+    if num_gpus > 0:
+        params['device'] = 'cuda' if num_gpus > 1 else 'cuda:0'
+    
+    # Store evaluation results
     evals_result = {}
-    print("Training with enhanced compute settings...")
+    
+    # Train with early stopping
+    print("Training model with anti-overfitting parameters...")
     model = xgb.train(
         params, 
-        dtrain, 
-        num_boost_round=50000,           # Significantly increased
-        early_stopping_rounds=100,      # Stop when validation doesn't improve
+        dtrain,
+        num_boost_round=30000,
+        early_stopping_rounds=200,    # More patience
         evals=[(dtrain, 'train'), (dval, 'validation')],
         evals_result=evals_result,
         verbose_eval=50
     )
     
-    # Rest of your function remains the same...
-    # Predict
-    probs = model.predict(dtest)
+    # === PREDICTION AND OUTPUTS ===
+    best_iter = model.best_iteration
+    print(f"Best iteration: {best_iter}")
+    
+    # Get predictions using best iteration
+    probs = model.predict(dtest, iteration_range=(0, best_iter+1))
     preds = np.argmax(probs, axis=1)
     confs = np.max(probs, axis=1)
     
-    # Continue with the rest of your existing function...
+    # Decode predictions
     pred_labels = label_encoder.inverse_transform(preds)
-
-    # Save output
-    test_df = test_df.copy()
-    test_df['xgb_predicted_class_id'] = preds
-    test_df['xgb_predicted_class'] = pred_labels
-    test_df['xgb_confidence'] = confs
-    test_df.to_csv(out_file, index=False)
+    
+    # Save results
+    test_df_result = test_df.copy()
+    test_df_result['xgb_predicted_class_id'] = preds
+    test_df_result['xgb_predicted_class'] = pred_labels
+    test_df_result['xgb_confidence'] = confs
+    test_df_result.to_csv(out_file, index=False)
     print(f"Saved predictions to {out_file}")
     
-    
-    # Importance
-    imp = model.get_score(importance_type='gain')
-    top_feats = sorted(imp.items(), key=lambda x: x[1], reverse=True)[:20]
+    # Feature importance analysis
+    importance = model.get_score(importance_type='gain')
+    top_feats = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:20]
     print("\nTop features:")
     for f, score in top_feats:
         print(f"  {f}: {score:.3f}")
+    
 
-    # Visuals
     plot_period_amplitude(test_df, "xgb_predicted_class")
     plot_galactic_distribution(test_df, "xgb_predicted_class")
     plot_color_color(test_df, "xgb_predicted_class")
