@@ -15,8 +15,7 @@ import faiss
 import subprocess
 
 # Import visualization functions
-from vis import (create_gnn_dashboard, plot_gnn_training_loss, 
-                plot_gnn_embeddings, plot_gnn_feature_importance)
+from vis import *
 
 #########################################
 # UTILITY FUNCTIONS
