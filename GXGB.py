@@ -85,7 +85,7 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
         'min_child_weight': 30,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
-        'tree_method': 'gpu_hist',
+        'tree_method': 'hist',
         'predictor': 'gpu_predictor',
         'max_bin': 1024,                 # Doubled for more precision
         'sampling_method': 'gradient_based',  # Better sampling
@@ -94,19 +94,27 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
         'gamma': 0.1                     # Regularization
     }
     
-    # Configure GPU usage
+
+    # Configure GPU usage in new XGBoost 2.0+ way
     if num_gpus > 1:
-        params['n_gpus'] = num_gpus
+        # Multi-GPU setup for XGBoost 2.0+
+        params['device'] = 'cuda'
+        # Use distributed training for multiple GPUs
+        params['n_jobs'] = num_gpus
     else:
-        params['gpu_id'] = 0
-    
+        # Single GPU setup
+        params['device'] = 'cuda:0'
+
+
+    evals_result = {}
     print("Training with enhanced compute settings...")
     model = xgb.train(
         params, 
         dtrain, 
-        num_boost_round=5000,           # Significantly increased
+        num_boost_round=50000,           # Significantly increased
         early_stopping_rounds=100,      # Stop when validation doesn't improve
         evals=[(dtrain, 'train'), (dval, 'validation')],
+        evals_result=evals_result,
         verbose_eval=50
     )
     
@@ -141,6 +149,8 @@ def train_xgb(train_df, test_df, features, label_col, out_file):
     plot_color_color(test_df, "xgb_predicted_class")
     plot_astronomical_map(test_df, "xgb_predicted_class")
     plot_hr_diagram(test_df, "xgb_predicted_class")
+
+    plot_xgb_training_loss(evals_result)
 
     plot_bailey_diagram(test_df, "xgb_predicted_class")
     plot_galactic_coords(test_df, "xgb_predicted_class")

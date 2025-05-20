@@ -20,6 +20,139 @@ from scipy.ndimage import zoom, gaussian_filter
 import pandas as pd
 
 
+
+
+def plot_xgb_training_loss(results, save_path='figures/training_loss.png'):
+    """
+    Plot XGBoost training and validation loss curves in an informative and aesthetic way.
+    
+    Parameters:
+    -----------
+    results : dict or list
+        Either:
+        - dict with keys 'train' and 'validation' containing lists of loss values
+        - list of tuples from evals_result (will be converted to appropriate format)
+    save_path : str, optional
+        Path to save the plot image, default='class_figures/training_loss.png'
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import matplotlib.ticker as mtick
+    from matplotlib.patches import Rectangle
+    import seaborn as sns
+    
+    # Set style
+    sns.set_style("whitegrid")
+    plt.rcParams['font.family'] = 'DejaVu Sans'
+    plt.rcParams['axes.facecolor'] = '#f8f9fa'
+    
+    # Process input data format if needed
+    if isinstance(results, dict) and 'evals_result' in results:
+        # Handle evals_result dictionary structure
+        train_metric = list(results['evals_result']['train'].values())[0]
+        val_metric = list(results['evals_result']['validation'].values())[0]
+        train_loss = train_metric
+        val_loss = val_metric
+    elif isinstance(results, dict):
+        # Direct dictionary with train/validation keys
+        train_loss = results['train']
+        val_loss = results['validation']
+    else:
+        # Create from list of loss values
+        train_loss = [x[0] for x in results if 'train' in x[1]]
+        val_loss = [x[0] for x in results if 'validation' in x[1]]
+    
+    # Create iterations
+    iterations = list(range(1, len(train_loss) + 1))
+    
+    # Create figure
+    plt.figure(figsize=(12, 7))
+    
+    # Plot loss curves
+    plt.plot(iterations, train_loss, color="#3498db", linewidth=2.5, label="Training Loss")
+    plt.plot(iterations, val_loss, color="#e74c3c", linewidth=2.5, label="Validation Loss")
+    
+    # Find best validation loss point
+    best_iter = np.argmin(val_loss) + 1
+    best_val_loss = min(val_loss)
+    best_train_loss = train_loss[best_iter - 1]
+    
+    # Highlight best model point
+    plt.scatter(best_iter, best_val_loss, s=150, color="#e74c3c", 
+                edgecolor="white", linewidth=2, zorder=10)
+    
+    # Add a rectangle to highlight the best point
+    plt.gca().add_patch(Rectangle((best_iter - len(iterations)*0.02, best_val_loss - 0.04*max(val_loss)),
+                                 len(iterations)*0.04, 0.08*max(val_loss),
+                                 alpha=0.1, color='#e74c3c', zorder=5))
+    
+    # Add text annotations for best model
+    plt.annotate(f'Best model: iteration {best_iter}\nValidation loss: {best_val_loss:.4f}',
+                xy=(best_iter, best_val_loss), xytext=(best_iter + len(iterations)*0.05, best_val_loss),
+                arrowprops=dict(arrowstyle='->', color='#555555', linewidth=1.5),
+                fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.5", fc="#f8f9fa", ec="#cccccc", alpha=0.9))
+    
+    # Calculate delta between train and validation at best point
+    delta = best_val_loss - best_train_loss
+    plt.annotate(f'Δ = {delta:.4f}', 
+                xy=(best_iter, (best_val_loss + best_train_loss)/2),
+                xytext=(best_iter - len(iterations)*0.15, (best_val_loss + best_train_loss)/2),
+                fontsize=11, color='#555555')
+    
+    # Add a subtle vertical line at best iteration
+    plt.axvline(x=best_iter, color='#777777', linestyle='--', alpha=0.3, zorder=1)
+    
+    # Customize plot
+    plt.title('XGBoost Training Progress', fontsize=18, pad=20, color='#333333')
+    plt.xlabel('Boosting Iterations', fontsize=14, color='#555555')
+    plt.ylabel('Multiclass Log Loss', fontsize=14, color='#555555')
+    
+    # Customize grid
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Customize ticks
+    plt.gca().xaxis.set_major_formatter(mtick.FuncFormatter(lambda x, pos: f'{int(x):,}'))
+    
+    # Add legend
+    plt.legend(loc='upper right', frameon=True, framealpha=0.9, fontsize=12)
+    
+    # Add early stopping annotation
+    if len(val_loss) < len(train_loss):
+        plt.axvspan(len(val_loss), len(train_loss), alpha=0.1, color='grey')
+        plt.text(len(val_loss) + (len(train_loss) - len(val_loss))/2, min(val_loss),
+                "Early stopping activated", ha='center', va='bottom', fontsize=10)
+    
+    # Add text box with training summary
+    textstr = '\n'.join((
+        f'Final Training Loss: {train_loss[-1]:.4f}',
+        f'Final Validation Loss: {val_loss[-1]:.4f}',
+        f'Best Validation Loss: {best_val_loss:.4f} (iter {best_iter})',
+        f'Overfitting Gap: {val_loss[-1] - train_loss[-1]:.4f}'
+    ))
+    props = dict(boxstyle='round', facecolor='#f8f9fa', alpha=0.9, edgecolor='#dddddd')
+    plt.text(0.03, 0.03, textstr, transform=plt.gca().transAxes, fontsize=11,
+            verticalalignment='bottom', bbox=props)
+    
+    # Add subtle "gap" shading between curves
+    plt.fill_between(iterations, train_loss, val_loss, color='#f1c40f', alpha=0.1)
+    
+    # Add subtle convergence trend line
+    z = np.polyfit(iterations[-len(iterations)//3:], val_loss[-len(iterations)//3:], 1)
+    p = np.poly1d(z)
+    plt.plot(iterations[-len(iterations)//3:], p(iterations[-len(iterations)//3:]), 
+             ":", color="#16a085", alpha=0.7, linewidth=2)
+    
+    # Tight layout and save
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved training loss visualization to {save_path}")
+    
+    return plt.gcf()
+
+
+
+
+
 # Set global figure parameters for better readability in publications
 def set_plot_style(large_text=False):
     """Set the plot style for publication-quality figures"""
@@ -346,7 +479,7 @@ def plot_galactic_distribution(df, class_column, min_confidence=0.7, density_con
         plt.legend(fontsize=10, loc='upper left', bbox_to_anchor=(1, 1))
     
     plt.tight_layout()
-    plt.savefig('class_figures/galactic_distribution.png', dpi=300)
+    plt.savefig('figures/galactic_distribution.png', dpi=300)
     #plt.show()
     
     # Create a density map as a 2D histogram for all stars
