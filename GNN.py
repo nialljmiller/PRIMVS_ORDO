@@ -34,7 +34,7 @@ def get_gpu_count():
         return 0
 
 def load_fits_to_df(path):
-    """Load FITS file to DataFrame with robust error handling"""
+    """Load FITS file to DataFrame with robust error handling and endianness fix"""
     print(f"Loading {path}...")
     try:
         with fits.open(path) as hdul:
@@ -45,13 +45,28 @@ def load_fits_to_df(path):
                 data = hdul[0].data
             
             if hasattr(data, 'names') and data.names:
-                # Structured array
-                df = pd.DataFrame()
+                # Structured array - build efficiently to avoid fragmentation
+                print(f"Processing structured FITS data with {len(data.names)} columns...")
+                
+                # Create dictionary of columns first, then build DataFrame all at once
+                data_dict = {}
                 for col in data.names:
-                    df[col] = data[col]
+                    # Fix endianness issues by converting to native byte order
+                    col_data = np.asarray(data[col])
+                    if col_data.dtype.byteorder not in ('=', '|'):
+                        # Convert to native byte order
+                        col_data = col_data.astype(col_data.dtype.newbyteorder('='))
+                    data_dict[col] = col_data
+                
+                # Build DataFrame from dictionary (much faster than column-by-column)
+                df = pd.DataFrame(data_dict)
+                
             else:
                 # Regular array
-                df = pd.DataFrame(data)
+                data_array = np.asarray(data)
+                if data_array.dtype.byteorder not in ('=', '|'):
+                    data_array = data_array.astype(data_array.dtype.newbyteorder('='))
+                df = pd.DataFrame(data_array)
             
             print(f"Loaded {len(df)} samples with {len(df.columns)} features")
             return df
@@ -116,16 +131,32 @@ def get_feature_list(train, test):
 #########################################
 
 def preprocess_data(train_df, test_df, features, label_col):
-    """Robust data preprocessing for GNN training"""
+    """Robust data preprocessing for GNN training with endianness handling"""
     print("Preprocessing data...")
     
     # Handle missing label column
     if label_col not in train_df.columns:
         raise ValueError(f"Label column '{label_col}' not found in training data")
     
-    # Extract features
-    X_train = train_df[features].copy()
-    X_test = test_df[features].copy()
+    # Ensure native byte order for all numeric columns
+    print("Fixing data types and byte order...")
+    for df_name, df in [("train", train_df), ("test", test_df)]:
+        for col in df.select_dtypes(include=[np.number]).columns:
+            if df[col].dtype.byteorder not in ('=', '|'):
+                print(f"Converting {col} to native byte order in {df_name}")
+                df[col] = df[col].astype(df[col].dtype.newbyteorder('='))
+    
+    # Extract features safely
+    print(f"Extracting {len(features)} features...")
+    try:
+        X_train = train_df[features].copy()
+        X_test = test_df[features].copy()
+    except Exception as e:
+        print(f"Error extracting features: {e}")
+        print("Available train columns:", list(train_df.columns))
+        print("Available test columns:", list(test_df.columns))
+        print("Requested features:", features)
+        raise
     
     print(f"Train shape: {X_train.shape}")
     print(f"Test shape: {X_test.shape}")
@@ -155,7 +186,7 @@ def preprocess_data(train_df, test_df, features, label_col):
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # Convert to tensors
+    # Convert to tensors with explicit dtype
     x_train = torch.tensor(X_train_scaled, dtype=torch.float32)
     x_test = torch.tensor(X_test_scaled, dtype=torch.float32)
     
@@ -577,7 +608,7 @@ def train_model_robust(model, data, optimizer, criterion, device, epochs=200, pa
 # MAIN WORKFLOW FUNCTION
 #########################################
 
-def train_gnn(train_df, test_df, features, label_col, out_file, k_neighbors=10, epochs=200):
+def train_gnn(train_df, test_df, features, label_col, out_file, graph_method='spatial_grid', sparsity=0.005, epochs=200):
     """Complete GNN workflow with robust error handling"""
     print("\n=== Enhanced GNN Training Workflow ===")
     
@@ -602,7 +633,7 @@ def train_gnn(train_df, test_df, features, label_col, out_file, k_neighbors=10, 
         
         # Graph construction for training data
         print("\nBuilding training graph...")
-        edge_index_train = build_knn_graph_sklearn(x_train, k=k_neighbors)
+        edge_index_train = build_sparse_graph(x_train, method=graph_method, sparsity=sparsity)
         
         # Create training data object
         train_data = Data(x=x_train, edge_index=edge_index_train, y=y_train)
@@ -639,7 +670,7 @@ def train_gnn(train_df, test_df, features, label_col, out_file, k_neighbors=10, 
         
         # Build combined graph for inference
         x_combined = torch.cat([x_train, x_test], dim=0)
-        edge_index_combined = build_knn_graph_sklearn(x_combined, k=k_neighbors)
+        edge_index_combined = build_sparse_graph(x_combined, method=graph_method, sparsity=sparsity)
         
         # Create combined data object
         combined_data = Data(x=x_combined, edge_index=edge_index_combined)
@@ -755,7 +786,8 @@ def main():
         # Train GNN
         model, results = train_gnn(
             train_df, test_df, features, label_col, out_file,
-            k_neighbors=8,  # Reduced for stability
+            graph_method='spatial_grid',  # Much faster than KNN
+            sparsity=0.01,  # Controls graph density
             epochs=150
         )
         
